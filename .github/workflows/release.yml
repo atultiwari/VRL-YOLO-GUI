@@ -1,0 +1,145 @@
+name: release
+
+# Builds unsigned desktop binaries for macOS (arm64) and Windows (x64),
+# then collects them into a draft GitHub Release.
+#
+# Triggers:
+#   - push a tag matching `v*`  -> full build + draft release
+#   - workflow_dispatch         -> full build, no release step
+#
+# Per-platform notes:
+#   * macos-14 is Apple Silicon (arm64). Intel macs are out of scope for
+#     v1 — see PLAN.md §12.
+#   * windows-latest is x64. Windows-on-ARM is deferred (PLAN.md §12.2):
+#     pyarrow / native-deps wheel coverage on Windows ARM64 isn't there
+#     yet, and the x64 binary runs under Windows' built-in emulator.
+#   * Cross-OS / cross-arch compilation is not supported by PyInstaller,
+#     hence one runner per (os, arch) cell instead of a build matrix on a
+#     single host.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Windows runners default Python's stdio encoding to cp1252, which chokes
+  # on the unicode glyphs our build scripts print (e.g. ▶ in banner()).
+  PYTHONUTF8: '1'
+  # actions/upload-artifact@v5 and astral-sh/setup-uv@v6 still bundle the
+  # Node 20 runtime. GitHub removes Node 20 from runners 2026-09-16; this
+  # flag forces those actions onto Node 24 now. Drop once upstream ships
+  # Node 24 majors.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: macos-arm64
+          - os: windows-latest
+            target: windows-x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: '9'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.11'
+          enable-cache: true
+
+      - name: Pin native CPython flavor (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          flavor="cpython-3.11-windows-x86_64-none"
+          uv python install "$flavor"
+          echo "UV_PYTHON=$flavor" >> "$GITHUB_ENV"
+          echo "Pinned Python flavor: $flavor"
+
+      - name: Install create-dmg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install create-dmg
+
+      - name: Install Python deps
+        run: uv sync --extra dev --extra desktop --extra ml
+
+      - name: Install Node deps
+        run: pnpm install
+
+      - name: Fetch starter model weights
+        run: uv run python scripts/fetch-models.py
+
+      - name: Build release with arch suffix
+        run: uv run python scripts/build-release.py --clean --arch-suffix
+
+      - name: Package macOS .app (zip fallback if no .dmg)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cd dist
+          if ls *.dmg >/dev/null 2>&1; then
+            echo "DMG ready: $(ls *.dmg)"
+          else
+            app=$(ls -d *.app)
+            ditto -c -k --keepParent "$app" "${app%.app}.zip"
+            echo "Zipped .app -> ${app%.app}.zip"
+          fi
+
+      - name: List dist/
+        shell: bash
+        run: ls -la dist/
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            dist/VRL YOLO GUI*.exe
+            dist/VRL YOLO GUI*.dmg
+            dist/VRL YOLO GUI*.zip
+
+  release:
+    name: draft github release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List collected files
+        run: find artifacts -type f -printf '%p  (%s bytes)\n' || find artifacts -type f
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          draft: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true

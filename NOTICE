@@ -1,0 +1,96 @@
+VRL YOLO GUI
+Copyright (C) 2026 Atul Tiwari <atultiwari.in@gmail.com>
+
+This product is licensed under the GNU Affero General Public License
+version 3 or any later version — see LICENSE.
+
+This product includes / depends on third-party software with separate
+licenses. The components below are linked or bundled (directly or via
+PyInstaller / pnpm) and remain under their original terms:
+
+------------------------------------------------------------------------
+Ultralytics YOLO  —  https://github.com/ultralytics/ultralytics
+  License: AGPL-3.0-or-later  (Ultralytics Enterprise license available
+  separately for commercial use; not sublicensed by this project.)
+
+PyTorch  —  https://pytorch.org/
+  License: BSD-3-Clause
+
+torchvision  —  https://github.com/pytorch/vision
+  License: BSD-3-Clause
+
+PySide6 (Qt for Python)  —  https://wiki.qt.io/Qt_for_Python
+  License: LGPL-3.0  (Qt 6 frameworks: LGPL-3.0 / commercial dual)
+
+Pyloid  —  https://github.com/pyloid/pyloid
+  License: Apache-2.0  (verify upstream before shipping)
+
+FastAPI  —  https://github.com/tiangolo/fastapi
+  License: MIT
+
+Uvicorn  —  https://github.com/encode/uvicorn
+  License: BSD-3-Clause
+
+Pydantic / Pydantic-settings  —  https://github.com/pydantic/pydantic
+  License: MIT
+
+OpenCV-Python  —  https://github.com/opencv/opencv-python
+  License: Apache-2.0
+
+Pillow  —  https://github.com/python-pillow/Pillow
+  License: HPND (BSD-like)
+
+scikit-image  —  https://github.com/scikit-image/scikit-image
+  License: BSD-3-Clause
+
+tifffile  —  https://github.com/cgohlke/tifffile
+  License: BSD-3-Clause
+
+ReportLab  —  https://www.reportlab.com/opensource/
+  License: BSD-3-Clause
+
+OpenPyXL  —  https://foss.heptapod.net/openpyxl/openpyxl
+  License: MIT
+
+PyYAML  —  https://pyyaml.org/
+  License: MIT
+
+NumPy  —  https://numpy.org/
+  License: BSD-3-Clause
+
+Next.js  —  https://github.com/vercel/next.js
+  License: MIT
+
+React  —  https://github.com/facebook/react
+  License: MIT
+
+Tailwind CSS  —  https://github.com/tailwindlabs/tailwindcss
+  License: MIT
+
+shadcn/ui  —  https://github.com/shadcn-ui/ui
+  License: MIT  (copy-paste components; not a runtime dependency)
+
+TanStack Query  —  https://github.com/TanStack/query
+  License: MIT
+
+Recharts  —  https://github.com/recharts/recharts
+  License: MIT
+
+lucide-react  —  https://github.com/lucide-icons/lucide
+  License: ISC
+
+zustand  —  https://github.com/pmndrs/zustand
+  License: MIT
+
+react-dropzone  —  https://github.com/react-dropzone/react-dropzone
+  License: MIT
+
+------------------------------------------------------------------------
+The bundled third-party software listed above is provided "as is", without
+warranty of any kind, express or implied. See each component's upstream
+project for full license texts and any additional notices.
+
+Trademarks: "YOLO" and "Ultralytics" are trademarks of Ultralytics, Inc.
+"Roboflow" is a trademark of Roboflow, Inc. All other trademarks are the
+property of their respective owners. Use in this NOTICE is descriptive
+and does not imply endorsement.

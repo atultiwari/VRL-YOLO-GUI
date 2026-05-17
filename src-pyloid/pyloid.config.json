@@ -1,0 +1,15 @@
+{
+  "app": {
+    "name": "VRL-YOLO-GUI",
+    "version": "0.1.0",
+    "author": "Atul Tiwari"
+  },
+  "window": {
+    "title": "VRL YOLO GUI",
+    "width": 1400,
+    "height": 900,
+    "min_width": 1100,
+    "min_height": 700
+  },
+  "icon": "src-pyloid/icons/icon.png"
+}
