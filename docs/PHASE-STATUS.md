@@ -24,7 +24,7 @@
 | P5.fix-1 — macOS Cmd+Q event-filter shutdown (regressed startup; superseded by P5.fix-2) | ⚠️ superseded | `v0.8.1` | `543b40d` |
 | P5.fix-2 — Window-scoped close filter | ✅ done | `v0.8.2` | `5bc93cc` |
 | P5.fix-3 — Flat ImageFolder + classify splitter + layout examples | ✅ done | `v0.8.3` | `72dc1db` |
-| P5.fix-4 — Subprocess env-var dispatch (frozen `-m` bug) | ✅ done | `v0.8.4` | `0000000` |
+| P5.fix-4 — Subprocess env-var dispatch (frozen `-m` bug) | ✅ done | `v0.8.4` | `a86da1b` |
 | P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
@@ -503,7 +503,7 @@ best_pt: <storage>/training/<job>/weights/best.pt
 - Layout examples are static ASCII trees. A future polish pass could swap for SVG or render real previews of the user's dropped folder.
 - Splitter is all-or-nothing: it merges ALL source images (flat + any pre-existing splits) and re-shuffles. If a user wants to PRESERVE a hand-curated train/val and just generate a missing test, they can't. Acceptable for v1; revisit if pilot feedback asks.
 
-### ✅ P5.fix-4 — Subprocess env-var dispatch · `v0.8.4` · `0000000`
+### ✅ P5.fix-4 — Subprocess env-var dispatch · `v0.8.4` · `a86da1b`
 
 **Trigger:** v0.8.3 binary shipped a working classify dataset wizard, but pressing **Start training** in the `.app` produced two symptoms:
 

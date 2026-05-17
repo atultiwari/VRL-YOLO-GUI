@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P5.fix-4",
     title: "Subprocess env-var dispatch (Train opened a second app + stuck at epoch 0)",
     tag: "v0.8.4",
-    commit: "0000000",
+    commit: "a86da1b",
     date: "2026-05-18",
     status: "current",
     features: [],
