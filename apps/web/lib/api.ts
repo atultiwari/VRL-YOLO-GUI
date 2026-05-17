@@ -1,4 +1,6 @@
 import type {
+  DatasetInfo,
+  HardwareInfo,
   HealthResponse,
   InferenceResponse,
   ModelInfo,
@@ -152,5 +154,88 @@ export async function importModel(file: File): Promise<ImportedModelResponse> {
   return fetchJson(`${API_BASE}/models/import`, {
     method: "POST",
     body: form,
+  });
+}
+
+// --- Train wizard ------------------------------------------------------
+
+export async function fetchHardware(
+  args: { task?: Task; imgsz?: number } = {},
+): Promise<HardwareInfo> {
+  const params = new URLSearchParams();
+  if (args.task) params.set("task", args.task);
+  if (args.imgsz) params.set("imgsz", String(args.imgsz));
+  const qs = params.toString();
+  return fetchJson(`${API_BASE}/hardware${qs ? `?${qs}` : ""}`);
+}
+
+export async function fetchDataset(datasetId: string): Promise<DatasetInfo> {
+  return fetchJson(`${API_BASE}/datasets/${encodeURIComponent(datasetId)}`);
+}
+
+export interface DatasetUploadProgress {
+  loaded: number;
+  total: number;
+  pct: number;
+}
+
+/**
+ * Upload a folder of files to /api/datasets/inspect with progress
+ * callbacks. Uses XMLHttpRequest (not fetch) because the Fetch API still
+ * doesn't expose upload-progress events — and a doctor dropping a 500-MB
+ * dataset deserves a real percent bar.
+ */
+export function uploadDataset(
+  files: File[],
+  onProgress?: (p: DatasetUploadProgress) => void,
+  signal?: AbortSignal,
+): Promise<DatasetInfo> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    for (const f of files) {
+      // webkitRelativePath like "my-dataset/train/images/img.jpg" — pass as
+      // the filename so the backend can reconstruct the directory tree.
+      const path =
+        (f as File & { webkitRelativePath?: string }).webkitRelativePath ||
+        f.name;
+      form.append("files", f, path);
+    }
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}/datasets/inspect`);
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onProgress({
+            loaded: e.loaded,
+            total: e.total,
+            pct: (e.loaded / e.total) * 100,
+          });
+        }
+      };
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+        } catch (err) {
+          reject(new ApiError(xhr.status, `bad JSON: ${err}`));
+        }
+      } else {
+        let detail = xhr.statusText;
+        try {
+          detail = JSON.parse(xhr.responseText).detail ?? detail;
+        } catch {
+          /* keep statusText */
+        }
+        reject(new ApiError(xhr.status, detail));
+      }
+    };
+    xhr.onerror = () => reject(new ApiError(0, "network error"));
+    xhr.onabort = () => reject(new ApiError(0, "upload cancelled"));
+    if (signal) {
+      signal.addEventListener("abort", () => xhr.abort());
+    }
+    xhr.send(form);
   });
 }

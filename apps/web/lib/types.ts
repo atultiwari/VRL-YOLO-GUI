@@ -120,3 +120,37 @@ export interface ReportRequestBody {
   classify_per_class?: Record<string, number> | null;
   classify_flagged_count?: number | null;
 }
+
+// --- Dataset + hardware (Train wizard) ---
+
+export type DatasetFormat =
+  | "roboflow_yolo"
+  | "yolo"
+  | "coco"
+  | "voc"
+  | "imagefolder"
+  | "unknown";
+
+export interface DatasetSplit {
+  name: string;
+  image_count: number;
+  label_count: number;
+}
+
+export interface DatasetInfo {
+  id: string;
+  format: DatasetFormat;
+  task: Task;
+  root_path: string;
+  splits: DatasetSplit[];
+  classes: string[];
+  class_counts: Record<string, number>;
+  warnings: string[];
+}
+
+export interface HardwareInfo {
+  kind: "cuda" | "mps" | "cpu";
+  name: string;
+  vram_gb: number | null;
+  suggested_batch_size: number;
+}

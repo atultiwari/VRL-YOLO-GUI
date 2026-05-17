@@ -148,3 +148,46 @@ class ReportRequest(BaseModel):
     detect_per_class: dict[str, int] | None = None
     classify_per_class: dict[str, int] | None = None
     classify_flagged_count: int | None = None
+
+
+# --- Train wizard: dataset + hardware ---
+
+
+DatasetFormatLit = Literal[
+    "roboflow_yolo", "yolo", "coco", "voc", "imagefolder", "unknown"
+]
+
+
+class DatasetSplitOut(BaseModel):
+    name: str  # "train" / "valid" / "test" / "all"
+    image_count: int
+    label_count: int
+
+
+class DatasetInfoOut(BaseModel):
+    """What the wizard knows about an uploaded dataset.
+
+    `root_path` is the absolute path under `<storage_root>/datasets/<id>/`
+    on the machine the backend is running on. Useful for the user as a
+    diagnostic; the frontend doesn't read from it directly — it always
+    goes through /api/datasets/{id}.
+    """
+
+    id: str
+    format: DatasetFormatLit
+    task: Task
+    root_path: str
+    splits: list[DatasetSplitOut]
+    classes: list[str]
+    class_counts: dict[str, int] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class HardwareInfo(BaseModel):
+    kind: Literal["cuda", "mps", "cpu"]
+    name: str
+    vram_gb: float | None = None
+    # Heuristic batch-size suggestion for YOLOv8/YOLO26 detection at the
+    # default image size (640). Classification can usually go 2-3× higher
+    # at the same VRAM — see `engine/hardware.py`.
+    suggested_batch_size: int = 8

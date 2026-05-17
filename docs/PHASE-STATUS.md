@@ -16,8 +16,8 @@
 | **P3a — Predict v1: batch + presets** | ✅ done | `v0.4-p3a-predict-batch` | `84dc3f8` |
 | **P3b — Predict v1: reports, import & settings** | ✅ done | `v0.5-p3b-predict-reports` | `0d05150` |
 | P3b.fix-1 — QtWebEngine downloads | ✅ done | — | `cd1a92b` |
-| P4a — Train (Detection) wizard | ⏳ next | — | — |
-| P4b — Train (Detection) local run | ⏳ pending | — | — |
+| **P4a — Train (Detection) wizard** | ✅ done | `v0.6-p4a-train-detect-wizard` | TBD |
+| P4b — Train (Detection) local run | ⏳ next | — | — |
 | P5 — Train (Classification) | ⏳ pending | — | — |
 | P6 — Train on Colab | ⏳ pending | — | — |
 | P7 — Polish | ⏳ pending | — | — |
@@ -25,7 +25,7 @@
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at the P3b commit (`v0.5-p3b-predict-reports`). **Next phase:** P4a — Train mode dataset wizard (Roboflow YOLO / COCO / VOC detect formats), configure page, and hardware probe.
+**Current head:** `main` at the P4a commit (`v0.6-p4a-train-detect-wizard`). **Next phase:** P4b — Train (Detection) local run: subprocess wrapper around `ultralytics.train()`, live metric WebSocket, results page with confusion matrix + "Save to library".
 
 ---
 
@@ -240,17 +240,64 @@ pnpm build (desktop)       → /settings 3.29 kB · /predict 133 kB · /models 7
 - PDF thumbnail grid caps at 12 samples per report (first 12 successful results). Curated selection will land alongside per-image flag annotations.
 - No streaming batch WS endpoint yet — client-side iteration continues. Will be revisited when Train (P4) needs WS plumbing for live training metrics.
 
+### ✅ P4a — Train (Detection) wizard · `v0.6-p4a-train-detect-wizard`
+
+**Phase deliverable:** the user lands on `/train`, picks Object detection,
+drops a dataset folder, sees split + class + warning stats, and tunes a
+configure form pre-populated with the hardware's suggested batch size —
+all without writing a single line of CLI.
+
+**Sub-phases:**
+
+| # | Subject | Outcome |
+|---|---|---|
+| P4a.1 | Backend dataset inspector | `server/vrl_yolo/engine/dataset.py` — `inspect_dataset()` auto-detects Roboflow YOLO / plain YOLO / COCO / Pascal VOC / ImageFolder; `write_uploaded_dataset()` streams uploads into `<storage_root>/datasets/<uuid>/` with path-traversal protection + 4 GB cap. |
+| P4a.2 | Pydantic schemas | `DatasetSplitOut`, `DatasetInfoOut`, `HardwareInfo` added to `api/schemas.py`. |
+| P4a.3 | Endpoints | `POST /api/datasets/inspect` (multipart with `webkitRelativePath`-shaped filenames), `GET /api/datasets/{id}` (rehydrate), `GET /api/hardware?task=&imgsz=` (returns kind/name/vram_gb/suggested_batch_size — heuristic in `engine/hardware.suggest_batch_size`). |
+| P4a.4 | Train store (Zustand) | `apps/web/lib/train-store.ts` — typed `TrainState` (`selectedTask`, `dataset`, `hyperparams`) + `applyPreset()` + persist to `localStorage` so wizard state survives a reload. |
+| P4a.5 | `/train` task picker | Two cards: Detection (active) and Classification (P5-gated). Resets the store on pick so a half-finished run can't leak into a new one. |
+| P4a.6 | `/train/dataset` wizard | `FolderDropzone` (reused from Predict) → XHR upload with real progress bar + Cancel via `AbortController` → DatasetSummary card with per-split table + class chips + warnings. Continue button gated on detect task + known format. |
+| P4a.7 | `/train/configure` form | Model picker (detect-only), preset chips (Quick/Standard/Best/Custom), image-size chips, batch-size slider tied to `/api/hardware`. HardwareCard sidebar + RunSummary card (steps/epoch + total steps). Auto-rehydrates the dataset on mount via `GET /api/datasets/{id}` so a refresh doesn't lose state. |
+
+**Verification:**
+
+```
+step: backend ready in 53 ms
+GET  /api/health                       → version 0.6.0
+GET  /api/hardware                     → MPS, suggested_batch_size=8 (detect@640)
+GET  /api/hardware?task=classify&imgsz=224  → suggested_batch_size=16
+POST /api/datasets/inspect (Roboflow YOLO multipart)
+                                       → format=roboflow_yolo, task=detect,
+                                          classes=[positive,negative],
+                                          splits=[train, valid]
+GET  /api/datasets/{id}                → same payload (rehydrate)
+GET  /train/                           → 200
+GET  /train/dataset/                   → 200
+GET  /train/configure/                 → 200
+GET  /train/run/                       → 200 (P4b preview)
+pnpm type-check                        → clean
+pnpm build (desktop)                   → /train 3.15 kB · /train/configure 6.86 kB
+                                          /train/dataset 6.19 kB · /train/run 2.9 kB
+```
+
+**Known limitations carried into P4b:**
+- Training itself doesn't run yet — `/train/run` is a preview that shows the configured payload. P4b ships the subprocess + live metric WebSocket + results page with confusion matrix + "Save to library".
+- Classification training is detected (ImageFolder summary shows up correctly) but the configure page is detection-only. P5 adds the classify branch.
+- Plain YOLO datasets (no `data.yaml`) require manual class-naming on the configure page — currently we warn but there's no inline editor (lands with the run page in P4b).
+- Multipart upload is the only way to ship a dataset right now. Native folder-picker bridge for desktop mode lands in P7.
+
 ---
 
-## Up next: P4a — Train (Detection) wizard
+## Up next: P4b — Train (Detection) local run
 
 **Estimated 1 week** per PLAN.md §14. Scope:
 
-- Dataset wizard (Roboflow YOLO / COCO / VOC detect formats); folder validation, class-balance report.
-- Configure page: model picker (detect-only), training preset (Quick / Standard / Best), image size, batch size suggested from `detect_accelerator()`.
-- Hardware probe in the UI — show CUDA / MPS / CPU + VRAM (when applicable).
+- `engine/training.py` — subprocess wrapper around `model.train(...)`; parses Ultralytics' stdout into structured metric events.
+- `POST /api/training/start` returns a job id; `WS /api/training/{job_id}/stream` pushes per-epoch loss / mAP50 / mAP50-95 + accuracy.
+- `/train/run` becomes a live page: start, cancel, progress, live Recharts curves for loss + mAP, last-epoch sample predictions.
+- Results page: confusion matrix, per-class AP, sample val predictions, **Save to model library** (writes `best.pt` into `<storage_root>/models/<task>/<run-name>/best.pt` so `/models` picks it up via `source: trained`).
 
-**Phase tag at completion:** `v0.6-p4a-train-detect-wizard`.
+**Phase tag at completion:** `v0.7-p4b-train-detect-run`.
 
 ---
 

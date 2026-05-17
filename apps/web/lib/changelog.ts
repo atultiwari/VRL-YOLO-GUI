@@ -41,13 +41,40 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.6.0",
+    phase: "P4a",
+    title: "Train — Detection wizard",
+    tag: "v0.6-p4a-train-detect-wizard",
+    commit: "TBD",
+    date: "2026-05-17",
+    status: "current",
+    features: [
+      "New three-step training wizard at /train → /train/dataset → /train/configure (with /train/run as a P4b preview placeholder).",
+      "/train task picker: Detection card opens the dataset wizard; Classification is gated behind a 'P5' badge so the doctor knows it's coming.",
+      "Dataset upload + auto-inspect: drop a folder, see the format (Roboflow YOLO / plain YOLO / COCO / Pascal VOC / ImageFolder), per-split image + label counts, class list, and any warnings before committing to a run.",
+      "Real upload progress bar via XMLHttpRequest (fetch still doesn't expose upload-progress events), with an in-flight Cancel button backed by AbortController.",
+      "Backend dataset inspector (`server/vrl_yolo/engine/dataset.py`): path-traversal-safe upload writer, format auto-detection, class-balance counters; 4 GB total-size cap.",
+      "Hardware probe at `/api/hardware`: returns kind/name/vram_gb/suggested_batch_size; the configure page reads it on mount and pre-fills the batch slider with a sensible default.",
+      "Configure page: model picker (detect models only), preset radio (Quick=5ep / Standard=50ep / Best=200ep / Custom), image-size chip selector, batch-size slider with live hardware hint, summary card showing steps/epoch + total steps.",
+      "Train state persisted to localStorage (Zustand) so reload / close-reopen during the wizard doesn't blow up the 200-image upload.",
+      "Dataset rehydrate endpoint `GET /api/datasets/{id}` — configure page re-fetches on mount; if the dataset was wiped from disk (e.g. via a Reset desktop storage run), the user bounces back to /train/dataset.",
+    ],
+    fixes: [],
+    knownLimitations: [
+      "Training itself doesn't run yet — /train/run is a preview that shows the configured payload. P4b lands the actual subprocess + live metric WebSocket + results page.",
+      "Classification training is detected (ImageFolder layouts get a friendly summary) but the configure page is detection-only. P5 ships the classify branch.",
+      "Plain YOLO datasets (no data.yaml) require you to fill in class names — currently we surface a warning, but the configure page doesn't yet have a class-naming editor. Plan to add this in P4b alongside the run page.",
+      "Datasets are uploaded over multipart — fast on a local Pyloid window but awkward on slow networks. A native folder-picker bridge for desktop mode lands in P7.",
+    ],
+  },
+  {
     version: "0.5.1",
     phase: "P3b.fix-1",
     title: "Predict — Downloads fix",
     tag: null,
     commit: "cd1a92b",
     date: "2026-05-17",
-    status: "current",
+    status: "shipped",
     features: [],
     fixes: [
       "CSV / XLSX / PDF export buttons in /predict folder mode now actually deliver a file — the v0.5.0 build had them silently dropping the download because QtWebEngine blocks downloads until something connects to the profile's `downloadRequested` signal. Pyloid's window doesn't ship a download manager, so the export request reached the backend, returned 200 with the right `Content-Disposition`, then the blob URL click went nowhere.",

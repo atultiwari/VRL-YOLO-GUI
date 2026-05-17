@@ -1,14 +1,108 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+import shutil
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+
+from vrl_yolo.api.schemas import DatasetInfoOut, DatasetSplitOut
+from vrl_yolo.config import Settings
+from vrl_yolo.engine.dataset import inspect_dataset, write_uploaded_dataset
+from vrl_yolo.paths import resolve_storage_root
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 
-@router.post("/inspect")
-def inspect_dataset() -> dict[str, object]:
-    """Inspect a dataset folder, detect task + format. Implemented in P4."""
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="dataset inspection lands in P4",
+def _settings(request: Request) -> Settings:
+    return request.app.state.settings
+
+
+def _datasets_root(settings: Settings) -> Path:
+    """Where the wizard plants every uploaded dataset."""
+    storage = settings.storage_path or resolve_storage_root()
+    return Path(storage) / "datasets"
+
+
+def _to_out(info) -> DatasetInfoOut:  # noqa: ANN001 — engine.dataset.DatasetInfo
+    return DatasetInfoOut(
+        id=info.id,
+        format=info.format,
+        task=info.task,
+        root_path=str(info.root_path),
+        splits=[
+            DatasetSplitOut(
+                name=s.name, image_count=s.image_count, label_count=s.label_count
+            )
+            for s in info.splits
+        ],
+        classes=list(info.classes),
+        class_counts=dict(info.class_counts),
+        warnings=list(info.warnings),
     )
+
+
+@router.post("/inspect", response_model=DatasetInfoOut)
+async def inspect_uploaded_dataset(
+    files: list[UploadFile] = File(..., description="Folder upload — every file in the dataset."),
+    settings: Settings = Depends(_settings),
+) -> DatasetInfoOut:
+    """Accept a folder upload, write it to disk, return inspection results.
+
+    Frontend appends each file with its `webkitRelativePath` as the
+    filename so the backend can reconstruct the directory tree. We
+    sanitise every path against traversal attempts before writing.
+    """
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="no files uploaded"
+        )
+
+    storage_root = settings.storage_path or resolve_storage_root()
+    Path(storage_root).mkdir(parents=True, exist_ok=True)
+
+    try:
+        dataset_root = await write_uploaded_dataset(
+            uploads=files,
+            storage_root=Path(storage_root),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=str(exc),
+        ) from exc
+
+    try:
+        info = inspect_dataset(dataset_root)
+    except FileNotFoundError as exc:
+        # write_uploaded_dataset created the dir, so this shouldn't fire,
+        # but guard anyway — better than a 500 stack trace.
+        shutil.rmtree(dataset_root, ignore_errors=True)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"dataset root not found after upload: {exc}",
+        ) from exc
+
+    return _to_out(info)
+
+
+@router.get("/{dataset_id}", response_model=DatasetInfoOut)
+def get_dataset(dataset_id: str, settings: Settings = Depends(_settings)) -> DatasetInfoOut:
+    """Re-fetch a previously-inspected dataset by id.
+
+    The configure page calls this on mount so a page reload (or
+    deep-linking from the changelog "open this run" flow in P4b)
+    rehydrates from disk instead of forcing a re-upload.
+    """
+    # Reject anything that doesn't look like the uuid hex we minted.
+    if not (dataset_id.isalnum() and 8 <= len(dataset_id) <= 64):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="malformed dataset id"
+        )
+    root = _datasets_root(settings) / dataset_id
+    if not root.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"dataset {dataset_id!r} not found on disk",
+        )
+    info = inspect_dataset(root)
+    return _to_out(info)

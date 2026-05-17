@@ -12,6 +12,29 @@ for the running tracker.
 
 ---
 
+## [0.6.0] — 2026-05-17 · P4a: Train — Detection wizard
+
+**Tag:** `v0.6-p4a-train-detect-wizard`
+
+### Added
+- **Three-step training wizard**: `/train` (task picker) → `/train/dataset` (upload + inspect) → `/train/configure` (model + hyperparams). `/train/run` is a P4b preview placeholder.
+- **Task picker** with Detection / Classification cards; Classification gated behind a "P5" badge.
+- **Dataset upload + auto-inspect**: drop a folder, backend writes it to `<storage_root>/datasets/<uuid>/` and returns format / splits / classes / warnings. Supported formats: Roboflow YOLO (`data.yaml` + `train/images/+labels/`), plain YOLO (`images/`+`labels/`), COCO (`annotations.json`), Pascal VOC (`.xml`), ImageFolder (classify-only summary).
+- **Real upload progress bar** via XHR with an in-flight Cancel button backed by `AbortController` — fetch still doesn't expose upload-progress events.
+- **Path-traversal-safe upload writer** in `engine/dataset.py`: 4 GB total cap, hostile-path rejection, Windows-reserved character sanitisation per segment.
+- **Hardware probe** at `GET /api/hardware?task=&imgsz=`: returns kind / name / vram_gb / suggested_batch_size, with a heuristic that scales by accelerator + VRAM + task (classify doubles the suggestion).
+- **Configure page**: model picker (detect models), preset radio (Quick/Standard/Best/Custom), image-size chip selector, batch-size slider with a live hardware hint, summary card with steps/epoch + total steps.
+- **Train state persisted to localStorage** (Zustand `vrl-yolo-gui.train.v1`) so a reload mid-wizard doesn't blow up the 200-image upload.
+- **Dataset rehydrate** endpoint `GET /api/datasets/{id}` — the configure page re-fetches on mount; if the dataset is gone (e.g. storage was wiped), the user is bounced back to `/train/dataset`.
+
+### Known limitations (deferred)
+- Training itself doesn't run yet — `/train/run` is a preview. P4b ships the subprocess + live metric WebSocket + results page.
+- Classification training is detected (ImageFolder summary) but the configure page is detection-only. P5 adds the classify branch.
+- Plain YOLO datasets (no `data.yaml`) require you to fill in class names — currently a warning, no editor yet (P4b).
+- Multipart upload is fast on a Pyloid window but awkward over slow networks. Native folder-picker bridge lands in P7.
+
+---
+
 ## [0.5.1] — 2026-05-17 · P3b.fix-1: Predict — Downloads fix
 
 No tag — between-phase patch.
@@ -126,6 +149,7 @@ No tag — between-phase patch.
 
 ---
 
+[0.6.0]: https://github.com/atultiwari/VRL-YOLO-GUI/releases/tag/v0.6-p4a-train-detect-wizard
 [0.5.1]: https://github.com/atultiwari/VRL-YOLO-GUI/commits/main
 [0.5.0]: https://github.com/atultiwari/VRL-YOLO-GUI/releases/tag/v0.5-p3b-predict-reports
 [0.4.0]: https://github.com/atultiwari/VRL-YOLO-GUI/releases/tag/v0.4-p3a-predict-batch

@@ -1,12 +1,12 @@
 # VRL YOLO GUI
 
-> **Status (v0.5.0, 2026-05-17):** Phases P0–P3b complete. Predict mode is
-> feature-complete for v1: **single-image** and **folder-batch** inference
-> for **detection** and **classification**, click any row in the batch
-> table to preview that image with predictions, export **CSV / XLSX / PDF**
-> reports, import your own fine-tuned `.pt` checkpoints, and a Settings
-> page for per-device preferences. Train modes (P4–P6) and Polish /
-> Packaging / Pilot (P7–P10) are next.
+> **Status (v0.6.0, 2026-05-17):** Phases P0–P4a complete. Predict is
+> feature-complete for v1 (single + batch detection + classification,
+> click-to-preview, CSV/XLSX/PDF reports, user `.pt` import, settings).
+> Train mode now has its full **wizard**: pick a task → drop a dataset
+> folder (auto-detect Roboflow YOLO / plain YOLO / COCO / VOC) → tune
+> hyperparameters with hardware-aware suggestions. The actual training
+> subprocess + live metrics + results page (P4b) is next.
 >
 > See [`CHANGELOG.md`](CHANGELOG.md) for the per-release feature list,
 > [`docs/PHASE-STATUS.md`](docs/PHASE-STATUS.md) for the phase tracker,
