@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P4b",
     title: "Train — Detection local run",
     tag: "v0.7-p4b-train-detect-run",
-    commit: "0000000",
+    commit: "2e42d9d",
     date: "2026-05-17",
     status: "current",
     features: [
