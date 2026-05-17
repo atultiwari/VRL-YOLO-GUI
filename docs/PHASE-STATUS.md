@@ -14,7 +14,7 @@
 | **P2 — Predict (Classification)** | ✅ done | `v0.3-p2-predict-classify` | `455efc8` |
 | Topbar fix — live version | ✅ done | — | `e62d8d2` |
 | **P3a — Predict v1: batch + presets** | ✅ done | `v0.4-p3a-predict-batch` | `84dc3f8` |
-| **P3b — Predict v1: reports, import & settings** | ✅ done | `v0.5-p3b-predict-reports` | TBD |
+| **P3b — Predict v1: reports, import & settings** | ✅ done | `v0.5-p3b-predict-reports` | `0d05150` |
 | P4a — Train (Detection) wizard | ⏳ next | — | — |
 | P4b — Train (Detection) local run | ⏳ pending | — | — |
 | P5 — Train (Classification) | ⏳ pending | — | — |
