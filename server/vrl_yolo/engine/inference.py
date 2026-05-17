@@ -72,16 +72,21 @@ class InferenceError(Exception):
 class InferenceEngine:
     """Stateless façade over the registry + Ultralytics.
 
-    The accelerator is detected once at construction time. Reload the
+    The accelerator is detected lazily on first access (cached afterwards).
+    Eager detection at construction time imports torch (~2 s cold), which
+    blocked uvicorn's startup and raced the Pyloid window's `load_url`;
+    deferring it keeps backend boot under half a second. Reload the
     process to pick up a hot-plugged GPU (rare in clinical settings).
     """
 
     def __init__(self, registry: ModelRegistry) -> None:
         self._registry = registry
-        self._accelerator = detect_accelerator()
+        self._accelerator: Accelerator | None = None
 
     @property
     def accelerator(self) -> Accelerator:
+        if self._accelerator is None:
+            self._accelerator = detect_accelerator()
         return self._accelerator
 
     def infer_single(
@@ -130,12 +135,14 @@ class InferenceEngine:
     ) -> DetectionResult:
         start = time.perf_counter()
         # ultralytics accepts PIL.Image directly; passing device picks the
-        # accelerator detected at construction.
+        # accelerator. Touching `.accelerator` here is what triggers the
+        # one-shot torch import on the first call.
+        accelerator = self.accelerator
         results = yolo.predict(
             source=image,
             conf=conf,
             iou=iou,
-            device=self._accelerator.kind if self._accelerator.kind != "cpu" else None,
+            device=accelerator.kind if accelerator.kind != "cpu" else None,
             verbose=False,
         )
         inference_ms = (time.perf_counter() - start) * 1000.0
@@ -145,7 +152,7 @@ class InferenceEngine:
                 task="detect",
                 model=model_name,
                 image_size=image.size,
-                accelerator=self._accelerator,
+                accelerator=accelerator,
                 inference_ms=inference_ms,
                 boxes=[],
                 counts_per_class={},
@@ -181,7 +188,7 @@ class InferenceEngine:
             task="detect",
             model=model_name,
             image_size=image.size,
-            accelerator=self._accelerator,
+            accelerator=accelerator,
             inference_ms=inference_ms,
             boxes=boxes_out,
             counts_per_class=counts,

@@ -19,6 +19,7 @@ import os
 import socket
 import sys
 import threading
+import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -233,14 +234,42 @@ def _build_settings():
     )
 
 
-def _start_backend(app, port: int) -> threading.Thread:
+def _start_backend(app, port: int):
+    """Spawn uvicorn on a daemon thread and return (thread, server).
+
+    The `server` handle is what we wait on — uvicorn flips
+    `server.started` to True only after the lifespan startup completes
+    AND the listener socket is bound, which is the exact signal we need
+    before calling `window.load_url`.
+    """
     import uvicorn  # noqa: E402
 
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
-    return thread
+    return thread, server
+
+
+def _wait_for_backend(server, *, timeout_s: float = 10.0) -> bool:
+    """Block until `uvicorn.Server.started` flips True, or `timeout_s` elapses.
+
+    Required because the main thread (which constructs the Pyloid window
+    and calls `load_url`) races uvicorn's startup on the daemon thread.
+    Loading the URL before uvicorn binds the socket produces Chromium's
+    ERR_CONNECTION_REFUSED page — the symptom that motivated this poll
+    loop in the first place.
+
+    Returns True if the server became ready, False on timeout. Polling
+    interval is intentionally short (50 ms): once startup work was
+    moved out of the lifespan, the typical wait is < 500 ms.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if server.started:
+            return True
+        time.sleep(0.05)
+    return False
 
 
 def main() -> int:
@@ -278,7 +307,18 @@ def main() -> int:
 
     port = _pick_port()
     print(f"step: start uvicorn on 127.0.0.1:{port}")
-    _start_backend(app, port)
+    _, backend_server = _start_backend(app, port)
+
+    splash.update("Waiting for backend…")
+    print(f"step: wait for backend on 127.0.0.1:{port}")
+    wait_start = time.monotonic()
+    if _wait_for_backend(backend_server, timeout_s=10.0):
+        print(f"  backend ready in {(time.monotonic() - wait_start) * 1000:.0f} ms")
+    else:
+        # Don't bail — load the URL anyway so the user sees the
+        # Chromium error page and can hit Reload after the backend
+        # belatedly comes up. The launch.log still has the timeline.
+        print("  WARNING: backend not ready after 10 s; loading URL anyway")
 
     splash.update("Opening window…")
     print("step: construct Pyloid window")

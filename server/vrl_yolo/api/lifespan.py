@@ -16,6 +16,14 @@ async def lifespan(app: FastAPI):
 
     Settings already lives on app.state; we hang the registry and engine
     off it so route handlers can resolve them via Depends().
+
+    **Deliberately fast**: we do NOT scan the model library or detect the
+    accelerator here. Both are deferred to first request (the registry
+    lazy-scans via `.list()`, and `InferenceEngine.accelerator` is a lazy
+    property). Eager startup work was blocking uvicorn's socket bind for
+    ~12 s on a cold cache (torch import + four Ultralytics checkpoint
+    inspections), which lost a race with the Pyloid window's `load_url`
+    and produced an ERR_CONNECTION_REFUSED page on first launch.
     """
     settings: Settings = app.state.settings
 
@@ -24,7 +32,6 @@ async def lifespan(app: FastAPI):
     user.mkdir(parents=True, exist_ok=True)
 
     registry = ModelRegistry(bundled_dir=bundled, user_dir=user)
-    registry.scan()
 
     app.state.registry = registry
     app.state.engine = InferenceEngine(registry)
