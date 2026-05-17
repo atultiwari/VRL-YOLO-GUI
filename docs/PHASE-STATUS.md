@@ -1,7 +1,7 @@
 # Phase Status
 
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones).
-> Updated at the end of each phase boundary. **Last edit: 2026-05-17 (P5 shipped).**
+> Updated at the end of each phase boundary. **Last edit: 2026-05-17 (P5.fix-1 — macOS Cmd+Q crash).**
 
 ## Snapshot
 
@@ -21,6 +21,7 @@
 | **P4b — Train (Detection) local run** | ✅ done | `v0.7-p4b-train-detect-run` | `2e42d9d` |
 | P4b.fix-1 — Models download + rename + ml-import safety net | ✅ done | — | `2c0ced6` |
 | **P5 — Train (Classification)** | ✅ done | `v0.8-p5-train-classify` | `1d104f7` |
+| P5.fix-1 — macOS Cmd+Q event-filter shutdown | ✅ done | — | `0000000` |
 | P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
@@ -387,6 +388,33 @@ End-to-end smoke: 16-image + 16-val ImageFolder, 1 epoch, YOLO26n-cls on Apple S
 - Confusion matrix + per-class precision/recall reports for classify are P7-polish — the run page shows live top-1/top-5 but doesn't yet render a confusion grid at completion.
 - Multi-tenant training is still out of scope; one in-flight job per JobManager.
 - Colab tunnel handoff for classify (PLAN.md §11) lands in P6 alongside detect.
+
+### ✅ P5.fix-1 — macOS Cmd+Q event-filter shutdown · `0000000`
+
+**Trigger:** v0.7.1 (and v0.8.0) crashed on Cmd+Q with `EXC_BAD_ACCESS / KERN_INVALID_ADDRESS at 0x0` in `QSurface::~QSurface` → `QOpenGLContext::currentContext()` → `QThreadStorageData::get()`, deep inside `__cxa_finalize_ranges` triggered by `-[NSApplication terminate:]`. Frame-for-frame identical to the documented crash in [`python-pyloid-desktop-packaging` skill §macOS quit-time crash](file:///Users/atultiwari/.claude/skills/python-pyloid-desktop-packaging/SKILL.md).
+
+**Why the existing workaround was insufficient on macOS 26.x:** v0.7.1 already shipped the skill's prescribed `aboutToQuit → os._exit(0)` hook (`src-pyloid/main.py:121-164`), but the crash trace showed the hook never ran. Reading the actual stack:
+
+1. Menu Cmd+Q → `-[NSApplication terminate:]` (frame 74).
+2. Qt's Cocoa platform sends `QEvent::Quit` to `QApplication` → `tryCloseAllWidgetWindows` (frames 60-59).
+3. Pyloid's `BrowserWindow.closeEvent` fires (frame 41) and calls `QCoreApplication.quit()` from Python (frame 35).
+4. On macOS, `quit()` routes back through `libqcocoa` and **re-enters `[NSApplication terminate:]` recursively** (frame 33).
+5. The second terminate proceeds straight to libc `exit()` (frame 30) — never unwinding back to `QCoreApplication::exec()`'s cleanup pass, which is the only place that emits `aboutToQuit`.
+6. `__cxa_finalize_ranges` runs deferred `deleteLater` from Pyloid's closeEvent → WebView destructor → `QSurface::~` → null deref.
+
+**Fix:** intercept one level earlier. Install a `QApplication`-level event filter that catches `QEvent::Quit` before `QApplication::event` hands it to `tryCloseAllWidgetWindows`, and `os._exit(0)` immediately. We never run any closeEvent, never re-enter terminate, never reach `__cxa_finalize_ranges`. Kept the `aboutToQuit` connection as a fallback for paths that DO unwind through `exec()` (e.g. SIGTERM signal handlers calling `app.quit()` from a normal context). Module-level reference (`_quit_event_filter`) keeps the `QObject` alive past the install function's stack frame — Qt holds a raw pointer via `installEventFilter`, and CPython would otherwise free it on return.
+
+**Sub-phases:**
+
+| # | Subject | Outcome |
+|---|---|---|
+| P5.fix-1.1 | Event-filter intercept | Replaced `aboutToQuit`-only hook in `src-pyloid/main.py` with a `_QuitEventFilter(QObject)` + `aboutToQuit` fallback. Filter handler `os._exit(0)`s on `QEvent.Type.Quit` after flushing stdio. |
+| P5.fix-1.2 | Version bump + docs | Bumped pyproject to 0.8.1, prepended changelog.ts entry (current), flipped 0.8.0 to shipped, mirrored CHANGELOG.md, updated PHASE-STATUS.md + CLAUDE.md ticklist. |
+| P5.fix-1.3 | Commit + push + backfill | `fix(p5.fix-1)` commit + push; release workflow auto-rebuilds mac-arm64 + win-x64 binaries; `chore: backfill SHA` follow-up. |
+
+**Carried-forward:**
+- In-flight training subprocess does not receive a SIGTERM before the parent exits via `os._exit(0)` — the child is reparented to launchd and runs to completion or is reaped by the OS. Plumbing a graceful job-group shutdown before the hard exit lands in a follow-up.
+- The upstream `python-pyloid-desktop-packaging` skill should be updated to reflect the re-entrant-terminate path observed here so other Pyloid projects don't repeat the same incomplete workaround.
 
 ---
 

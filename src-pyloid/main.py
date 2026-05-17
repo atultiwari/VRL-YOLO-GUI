@@ -118,32 +118,60 @@ class _PyiSplash:
             pass
 
 
+# Module-level reference so the event filter survives garbage collection
+# after `_install_macos_shutdown_workaround` returns. Qt holds a raw
+# pointer via `installEventFilter`, and CPython will free the QObject the
+# moment the local goes out of scope — installing a dangling filter
+# crashes the next event delivery.
+_quit_event_filter = None
+
+
 def _install_macos_shutdown_workaround() -> None:
     """Skip the Qt 6 + QtWebEngine static-destructor crash on macOS quit.
 
     Symptom: `EXC_BAD_ACCESS (SIGSEGV) / KERN_INVALID_ADDRESS at 0x0` when
     the user closes the app, in `QSurface::~QSurface` ->
-    `QOpenGLContext::currentContext` -> `QThreadStorageData::get`.
+    `QOpenGLContext::currentContext` -> `QThreadStorageData::get`, deep
+    inside `__cxa_finalize_ranges` triggered by `-[NSApplication terminate:]`.
 
-    Root cause: AppKit's `-[NSApplication terminate:]` (menu Cmd+Q or red
-    close) calls libc `exit()` after the last QWindow closes. `exit()`
-    runs `__cxa_finalize_ranges` over the dyld image graph, which
-    eventually drops the deleteLater'd `QWebEngineView` from Pyloid's
-    `closeEvent` handler. That destruction chain calls `QSurface::~` ->
-    `QOpenGLContext::currentContext()`, which queries `QThreadStorage`
-    — but `QThreadStorage`'s own static destructor has already run by
-    then. The read deref's a null pointer and the process aborts.
+    Root cause (refined on macOS 26.x with PySide6 6.9 + Pyloid 0.27):
+    AppKit's `-[NSApplication terminate:]` from the menu Cmd+Q routes
+    through Qt's Cocoa platform plugin, which sends a `QEvent::Quit` to
+    QApplication. That triggers `tryCloseAllWidgetWindows`, which fires
+    `closeEvent` on every top-level widget. Pyloid's BrowserWindow
+    closeEvent calls `QCoreApplication.quit()` — which on macOS routes
+    BACK through `libqcocoa` and re-enters `[NSApplication terminate:]`
+    recursively. That second terminate proceeds straight to libc
+    `exit()` without unwinding back to `QCoreApplication::exec()`'s
+    cleanup pass — which is where `aboutToQuit` is actually emitted.
+    `exit()` then runs `__cxa_finalize_ranges`, the deferred WebView
+    delete from Pyloid's closeEvent fires, `QSurface::~` queries
+    `QThreadStorage` whose static destructor has already run, and the
+    process aborts on a null deref.
 
-    Fix: hook `QCoreApplication::aboutToQuit`, which is emitted
-    synchronously *inside* `QCoreApplication::quit()` before AppKit's
-    `exit()` actually fires, and call `os._exit(0)` to skip the entire
-    Python/Qt static-destructor chain. The line-buffered launch.log
-    captures any final step prints before the process is reaped.
+    Fix: intercept ONE level earlier than `aboutToQuit`. A
+    `QApplication`-level event filter catches `QEvent::Quit` before
+    QApplication::event hands it to `tryCloseAllWidgetWindows`. By
+    `os._exit(0)`-ing right there, we never run any closeEvent, never
+    re-enter terminate, never reach the static-destructor chain. The
+    line-buffered launch.log captures the intercept print before the
+    process is reaped.
+
+    We also keep an `aboutToQuit` fallback for code paths that DO
+    unwind through `exec()` (e.g. a SIGTERM signal handler that calls
+    `app.quit()` from a normal context) — that hook costs nothing
+    extra when the event-filter intercept fires first.
+
+    NB: the parent `python-pyloid-desktop-packaging` skill historically
+    documented `aboutToQuit` alone as sufficient. v0.8.0 shipped that
+    version; v0.7.1 crashed on Cmd+Q despite the hook being installed,
+    because of the re-entrant terminate path described above. The skill
+    should be updated separately to reflect this.
     """
     if sys.platform != "darwin":
         return
     try:
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import QEvent, QObject, Qt
         from PySide6.QtWidgets import QApplication
     except ImportError:
         return
@@ -152,16 +180,30 @@ def _install_macos_shutdown_workaround() -> None:
     if app is None:
         return
 
-    def _hard_exit() -> None:
+    def _hard_exit(reason: str) -> None:
         try:
             sys.stdout.flush()
             sys.stderr.flush()
         except Exception:  # noqa: BLE001
             pass
-        print("step: aboutToQuit — bypassing static-destructor crash via os._exit")
+        print(f"step: {reason} — bypassing static-destructor crash via os._exit")
         os._exit(0)
 
-    app.aboutToQuit.connect(_hard_exit, type=Qt.ConnectionType.DirectConnection)
+    class _QuitEventFilter(QObject):
+        def eventFilter(self, _obj, event) -> bool:  # noqa: ANN001 — Qt signature
+            if event.type() == QEvent.Type.Quit:
+                _hard_exit("QEvent.Quit intercepted")
+            # Never actually reached when intercepting — os._exit doesn't return.
+            return False
+
+    global _quit_event_filter
+    _quit_event_filter = _QuitEventFilter()
+    app.installEventFilter(_quit_event_filter)
+
+    app.aboutToQuit.connect(
+        lambda: _hard_exit("aboutToQuit fallback"),
+        type=Qt.ConnectionType.DirectConnection,
+    )
 
 
 def _install_download_handler() -> None:

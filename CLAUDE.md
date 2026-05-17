@@ -17,7 +17,7 @@ background. Success = doctor installs one binary, drops a folder of slide
 patches, gets annotated images (detect) or a prediction table + PDF (classify)
 in under 10 minutes.
 
-**Status (v0.8.0, 2026-05-17):**
+**Status (v0.8.1, 2026-05-17):**
 - ✅ Pre — `CLAUDE.md` entry guide (`9bd0b83`)
 - ✅ **P0** — Scaffolding · `v0.1-p0-scaffolding` (`d06e9e2`)
 - ✅ **P1** — Predict (Detection) · `v0.2-p1-predict-detect` (`2acd8f5`)
@@ -31,7 +31,8 @@ in under 10 minutes.
 - ✅ P4a.fix-1 — Roboflow upload + prepare-splits helper (`debf84b`)
 - ✅ **P4b** — Train (Detection) local run · `v0.7-p4b-train-detect-run` (`2e42d9d`) — live charts, cancel, save-to-library, class-name editor
 - ✅ P4b.fix-1 — Models download + rename + ml-import safety net (`2c0ced6`)
-- ✅ **P5** — Train (Classification) · `v0.8-p5-train-classify` — wizard + subprocess + top-1/top-5 metric streams, save-to-library routes per task
+- ✅ **P5** — Train (Classification) · `v0.8-p5-train-classify` (`1d104f7`) — wizard + subprocess + top-1/top-5 metric streams, save-to-library routes per task
+- ✅ P5.fix-1 — macOS Cmd+Q event-filter shutdown (`aboutToQuit` alone was insufficient on macOS 26.x — Pyloid's closeEvent re-enters `[NSApplication terminate:]` before `exec()` cleanup runs)
 - ⏳ **P6 next** — Train on Colab: Cloudflare tunnel + Drive sync + companion notebooks for both tasks
 
 **P3b also shipped three user-requested extras:**
