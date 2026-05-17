@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P3a",
     title: "Predict — Batch & Workflow Presets",
     tag: "v0.4-p3a-predict-batch",
-    commit: "TBD",
+    commit: "84dc3f8",
     date: "2026-05-17",
     status: "current",
     features: [
