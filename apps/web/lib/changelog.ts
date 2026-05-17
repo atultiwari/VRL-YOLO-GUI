@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P3b",
     title: "Predict — Reports, Import & Settings",
     tag: "v0.5-p3b-predict-reports",
-    commit: "TBD",
+    commit: "0d05150",
     date: "2026-05-17",
     status: "current",
     features: [
