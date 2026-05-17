@@ -41,13 +41,39 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.5.0",
+    phase: "P3b",
+    title: "Predict — Reports, Import & Settings",
+    tag: "v0.5-p3b-predict-reports",
+    commit: "TBD",
+    date: "2026-05-17",
+    status: "current",
+    features: [
+      "Settings page (new /settings route, sidebar entry under 'Preferences') with localStorage-backed preferences. First toggle: show / hide clinical workflow presets in /predict (default: hidden — the bundled COCO/ImageNet weights don't have clinical class names yet).",
+      "Folder-batch image preview: click any row in the per-image table to see that file's image with detection boxes or the classify top-5 chart in a preview pane above the aggregate.",
+      "Auto-select the first successful result so the preview pane never sits empty.",
+      "Backend report generators: GET-then-download CSV, XLSX (per-image + aggregate sheets), and PDF (cover + summary + thumbnail grid + per-image table). ReportLab + OpenPyXL — no new dependencies.",
+      "Frontend export toolbar (CSV / XLSX / PDF buttons) in the batch table card; PDF embeds up to 12 sample thumbnails resized to 480 px JPEG to keep payload size sane.",
+      "/api/models/import: upload a .pt checkpoint, backend reads `model.task` + class names via Ultralytics, places it in `<storage_root>/models/<task>/`, refreshes the registry; user-imported models show up immediately with a `source: 'user'` card.",
+      "/models page Import button: hidden file picker + mutation + query invalidation; shows backend errors verbatim (e.g. 'task=segment not supported in v1').",
+      "Topbar pill now reads `v0.5.0 · predict — reports, import & settings` via the shared `useLiveVersion()` hook.",
+    ],
+    fixes: [],
+    knownLimitations: [
+      "Sliders still re-run on click only (live-update is deferred to a future polish pass — feedback was that it was lower priority than reports + import).",
+      "Workflow presets hidden by default — clinical class names aren't in the bundled weights yet. Tracked to re-open in P10 (memory: project_presets_revisit).",
+      "PDF thumbnail grid caps at 12 samples per report; the first 12 successful items by default. Curated selection lands when we add per-image flag annotations.",
+      "No streaming batch WS endpoint yet — client-side iteration continues. Will be revisited when Train (P4) needs WS plumbing for live metrics.",
+    ],
+  },
+  {
     version: "0.4.0",
     phase: "P3a",
     title: "Predict — Batch & Workflow Presets",
     tag: "v0.4-p3a-predict-batch",
     commit: "84dc3f8",
     date: "2026-05-17",
-    status: "current",
+    status: "shipped",
     features: [
       "Folder mode: drop a folder of slide patches; the UI runs inference image-by-image with a live progress bar.",
       "Per-image results table — file, top class / box count, conf or count, inference ms — works for both detection and classification.",

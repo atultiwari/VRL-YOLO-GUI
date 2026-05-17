@@ -4,6 +4,7 @@ import type {
   ModelInfo,
   ModelsListResponse,
   PresetsListResponse,
+  ReportRequestBody,
   Task,
 } from "./types";
 
@@ -78,6 +79,77 @@ export async function inferSingle({
   form.append("conf", String(conf));
   form.append("iou", String(iou));
   return fetchJson(`${API_BASE}/inference/single`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+// --- Reports -----------------------------------------------------------
+
+export type ReportFormat = "csv" | "xlsx" | "pdf";
+
+/**
+ * Fetch a report blob and trigger a browser download. Returns the
+ * suggested filename so the caller can display a toast / success
+ * message. Throws ApiError if the backend rejects the request (empty
+ * items, malformed payload, etc.).
+ */
+export async function downloadReport(
+  format: ReportFormat,
+  body: ReportRequestBody,
+): Promise<string> {
+  const response = await fetch(`${API_BASE}/reports/${format}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const failure = await response.json();
+      detail = failure?.detail ?? response.statusText;
+    } catch {
+      detail = response.statusText;
+    }
+    throw new ApiError(response.status, detail);
+  }
+
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  const filename = match?.[1] ?? `report.${format}`;
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoke on next tick so Safari has time to start the download.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return filename;
+}
+
+// --- Model import ------------------------------------------------------
+
+export interface ImportedModelResponse {
+  name: string;
+  task: Task;
+  source: "user";
+  num_classes: number;
+}
+
+/**
+ * Upload a .pt checkpoint. Backend reads its task + class names via
+ * Ultralytics, places it under `<storage_root>/models/<task>/`, and
+ * refreshes the registry so the new card shows up in /models on next
+ * fetchModels().
+ */
+export async function importModel(file: File): Promise<ImportedModelResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  return fetchJson(`${API_BASE}/models/import`, {
     method: "POST",
     body: form,
   });

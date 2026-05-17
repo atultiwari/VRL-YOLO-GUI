@@ -104,3 +104,47 @@ class PresetInfo(BaseModel):
 
 class PresetsListResponse(BaseModel):
     presets: list[PresetInfo]
+
+
+# --- Report request ---
+
+
+class ReportBoxIn(BaseModel):
+    class_name: str
+    conf: float
+
+
+class ReportPredictionIn(BaseModel):
+    class_name: str
+    conf: float
+
+
+class ReportItemIn(BaseModel):
+    """One per-image row included in a CSV / XLSX / PDF report.
+
+    Mirrors what the frontend already has in memory after a batch run —
+    we just forward it to the report engine instead of re-running
+    inference. `image_b64` is optional and used only for the PDF
+    thumbnail grid; PDF stays usable without it (just no images).
+    """
+
+    filename: str
+    inference_ms: float = 0.0
+    # detect-only
+    boxes: list[ReportBoxIn] = Field(default_factory=list)
+    counts_per_class: dict[str, int] = Field(default_factory=dict)
+    # classify-only
+    top1: ReportPredictionIn | None = None
+    top5: list[ReportPredictionIn] = Field(default_factory=list)
+    # PDF-only inline thumbnail (base64, no data: prefix).
+    image_b64: str | None = None
+
+
+class ReportRequest(BaseModel):
+    task: Task
+    model: str
+    items: list[ReportItemIn]
+    review_threshold: float = 0.5
+    detect_per_class: dict[str, int] | None = None
+    classify_per_class: dict[str, int] | None = None
+    classify_flagged_count: int | None = None

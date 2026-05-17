@@ -14,8 +14,8 @@
 | **P2 — Predict (Classification)** | ✅ done | `v0.3-p2-predict-classify` | `455efc8` |
 | Topbar fix — live version | ✅ done | — | `e62d8d2` |
 | **P3a — Predict v1: batch + presets** | ✅ done | `v0.4-p3a-predict-batch` | `84dc3f8` |
-| P3b — Predict v1: reports + import | ⏳ next | — | — |
-| P4a — Train (Detection) wizard | ⏳ pending | — | — |
+| **P3b — Predict v1: reports, import & settings** | ✅ done | `v0.5-p3b-predict-reports` | TBD |
+| P4a — Train (Detection) wizard | ⏳ next | — | — |
 | P4b — Train (Detection) local run | ⏳ pending | — | — |
 | P5 — Train (Classification) | ⏳ pending | — | — |
 | P6 — Train on Colab | ⏳ pending | — | — |
@@ -24,7 +24,7 @@
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at the P3a commit (`v0.4-p3a-predict-batch`). **Next phase:** P3b — folder-batch CSV / XLSX / PDF reports and user model import via the UI.
+**Current head:** `main` at the P3b commit (`v0.5-p3b-predict-reports`). **Next phase:** P4a — Train mode dataset wizard (Roboflow YOLO / COCO / VOC detect formats), configure page, and hardware probe.
 
 ---
 
@@ -198,18 +198,58 @@ pnpm build (desktop)  → /predict 130 kB (+4 kB vs P2)
 - Sliders rerun on click only; live-update is in P3b polish.
 - Presets ship sensible defaults but assume the bundled COCO/ImageNet weights — point them at fine-tuned checkpoints for real clinical use.
 
+### ✅ P3b — Predict v1: reports, import & settings · `v0.5-p3b-predict-reports`
+
+**Phase deliverable:** doctor finishes a folder batch, clicks any row
+to preview its predictions, exports CSV / XLSX / PDF, and can import
+their own fine-tuned `.pt` checkpoint into the model library — all
+without touching a terminal.
+
+**Sub-phases (P3b plus the three user-requested extras):**
+
+| # | Subject | Outcome |
+|---|---|---|
+| S.1 | Settings infrastructure | `lib/settings.ts` — typed `AppSettings` + `useSettings()` hook backed by `localStorage`. Cross-tab + cross-component sync via a custom event. SSR-safe default fallback. |
+| S.2 | Sidebar Settings link + preset gating | New "Preferences" section in the sidebar with a Settings entry. `/predict` reads `show_presets` from `useSettings()` and only renders the `PresetPicker` when truthy. **Default: hidden** (user-requested; see memory `project_presets_revisit` for the re-open plan). |
+| P3b.F1 | Folder image preview | `components/predict/batch-preview.tsx` — renders the selected file's image with detection boxes (detect) or top-5 mini-chart (classify). `BatchTable` accepts `selectedIndex` + `onSelect` and highlights the active row. Auto-selects the first successful result so the preview never sits empty. |
+| P3b.R1 | Backend reports engine | `server/vrl_yolo/engine/reports.py` — task-aware CSV (per-image table), XLSX (per-image + aggregate sheets, with review-flag yellow highlight for classify rows below threshold), PDF (cover + summary + 3-col thumbnail grid + per-image table). ReportLab + OpenPyXL, both already in deps. |
+| P3b.R2 | Report routes + schemas | `ReportRequest` / `ReportItemIn` + `routers/reports.py`. `POST /api/reports/{csv,xlsx,pdf}` return streaming responses with `Content-Disposition: attachment; filename=...`. PDF decodes optional base64 thumbnails. |
+| P3b.R3 | Frontend export toolbar | `lib/report-export.ts` builds the request body (resizes thumbnails to 480 px JPEG for PDF, max 12 samples) and triggers a Blob download. Buttons live in `BatchTable`'s new `toolbar` slot. |
+| P3b.M1 | User .pt import backend | `POST /api/models/import` — streams the upload to a temp file (500 MB cap), inspects via Ultralytics, rejects unsupported tasks, moves to `<storage_root>/models/<task>/`, re-scans the registry. Path traversal + filename sanitisation enforced. |
+| P3b.M2 | Frontend Import button | `/models` page header now has an Import button (hidden file input + mutation). Success shows "Imported `<name>`"; backend errors surface verbatim. `['models']` query invalidates so the new card appears immediately. |
+
+**Verification:**
+
+```
+step: backend ready in 55 ms
+GET  /api/health           → version 0.5.0
+GET  /api/presets          → 9 records (still shipped; hidden in UI by setting)
+POST /api/reports/csv      → 200 · 175 bytes (proper headers + per-image rows)
+POST /api/reports/xlsx     → 200 · 5.8 KB (Microsoft Excel 2007+; per-image + Aggregate sheet)
+POST /api/reports/pdf      → 200 · 3.1 KB (PDF 1.4, 2 pages: cover/summary + per-image table)
+POST /api/models/import    → 200 · ModelInfo for a copied yolo26n.pt (task=detect, 80 classes, source=user)
+GET  /settings/            → 200 (new static route)
+pnpm type-check            → clean
+pnpm build (desktop)       → /settings 3.29 kB · /predict 133 kB · /models 7.39 kB
+```
+
+**Known limitations carried into P4:**
+- Sliders still re-run on click only (live-update deferred again; lower priority than reports + import per user feedback).
+- Workflow presets hidden by default. Revisit in P10 once a clinical demo checkpoint is bundled.
+- PDF thumbnail grid caps at 12 samples per report (first 12 successful results). Curated selection will land alongside per-image flag annotations.
+- No streaming batch WS endpoint yet — client-side iteration continues. Will be revisited when Train (P4) needs WS plumbing for live training metrics.
+
 ---
 
-## Up next: P3b — Predict v1 — reports + import
+## Up next: P4a — Train (Detection) wizard
 
 **Estimated 1 week** per PLAN.md §14. Scope:
 
-- CSV / XLSX / PDF report generation (task-aware templates per PLAN.md §10).
-- `/api/models/import` — accept a `.pt` upload, read `model.task` from the checkpoint, copy into `<storage_root>/models/<task>/`, refresh the registry.
-- Slider live-update for single-image inference (re-run debounced).
-- Sample-folder fixture in `tests/fixtures/` so future regressions catch broken batch flows.
+- Dataset wizard (Roboflow YOLO / COCO / VOC detect formats); folder validation, class-balance report.
+- Configure page: model picker (detect-only), training preset (Quick / Standard / Best), image size, batch size suggested from `detect_accelerator()`.
+- Hardware probe in the UI — show CUDA / MPS / CPU + VRAM (when applicable).
 
-**Phase tag at completion:** `v0.5-p3b-predict-reports`.
+**Phase tag at completion:** `v0.6-p4a-train-detect-wizard`.
 
 ---
 

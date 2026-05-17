@@ -1,5 +1,12 @@
 import Link from "next/link";
-import { Activity, Brain, Layers, Microscope, Sparkles } from "lucide-react";
+import {
+  Activity,
+  Brain,
+  Layers,
+  Microscope,
+  Settings as SettingsIcon,
+  Sparkles,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { currentRelease } from "@/lib/changelog";
@@ -11,7 +18,7 @@ type NavItem = {
   icon: React.ComponentType<{ className?: string }>;
 };
 
-const NAV: NavItem[] = [
+const WORKSPACE: NavItem[] = [
   {
     href: "/",
     label: "Home",
@@ -38,12 +45,36 @@ const NAV: NavItem[] = [
   },
 ];
 
+const PREFERENCES: NavItem[] = [
+  {
+    href: "/settings",
+    label: "Settings",
+    description: "Preferences for this device",
+    icon: SettingsIcon,
+  },
+];
+
 const RELEASE_NOTES: NavItem = {
   href: "/changelog",
   label: "Changelog",
   description: "What works in which build",
   icon: Sparkles,
 };
+
+function NavLink({ item }: { item: NavItem }) {
+  return (
+    <Link
+      href={item.href}
+      className="group flex items-start gap-3 rounded-md px-3 py-2 text-sm transition hover:bg-accent-subtle"
+    >
+      <item.icon className="mt-0.5 size-4 text-ink-muted group-hover:text-accent" />
+      <span className="flex flex-col">
+        <span className="font-medium text-ink">{item.label}</span>
+        <span className="text-xs text-ink-muted">{item.description}</span>
+      </span>
+    </Link>
+  );
+}
 
 export function Sidebar() {
   const current = currentRelease();
@@ -55,18 +86,15 @@ export function Sidebar() {
       <p className="px-3 pb-3 text-xs font-semibold uppercase tracking-[0.18em] text-ink-muted">
         Workspace
       </p>
-      {NAV.map((item) => (
-        <Link
-          key={item.href}
-          href={item.href}
-          className="group flex items-start gap-3 rounded-md px-3 py-2 text-sm transition hover:bg-accent-subtle"
-        >
-          <item.icon className="mt-0.5 size-4 text-ink-muted group-hover:text-accent" />
-          <span className="flex flex-col">
-            <span className="font-medium text-ink">{item.label}</span>
-            <span className="text-xs text-ink-muted">{item.description}</span>
-          </span>
-        </Link>
+      {WORKSPACE.map((item) => (
+        <NavLink key={item.href} item={item} />
+      ))}
+
+      <p className="mt-6 px-3 pb-2 text-xs font-semibold uppercase tracking-[0.18em] text-ink-muted">
+        Preferences
+      </p>
+      {PREFERENCES.map((item) => (
+        <NavLink key={item.href} item={item} />
       ))}
 
       <p className="mt-6 px-3 pb-2 text-xs font-semibold uppercase tracking-[0.18em] text-ink-muted">

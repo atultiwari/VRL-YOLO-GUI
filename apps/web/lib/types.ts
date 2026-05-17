@@ -85,3 +85,38 @@ export interface PresetInfo {
 export interface PresetsListResponse {
   presets: PresetInfo[];
 }
+
+// --- Reports ---
+
+export interface ReportBoxIn {
+  class_name: string;
+  conf: number;
+}
+
+export interface ReportPredictionIn {
+  class_name: string;
+  conf: number;
+}
+
+export interface ReportItemIn {
+  filename: string;
+  inference_ms: number;
+  // detect-only
+  boxes?: ReportBoxIn[];
+  counts_per_class?: Record<string, number>;
+  // classify-only
+  top1?: ReportPredictionIn | null;
+  top5?: ReportPredictionIn[];
+  // PDF-only thumbnail (base64 without `data:` prefix).
+  image_b64?: string;
+}
+
+export interface ReportRequestBody {
+  task: Task;
+  model: string;
+  items: ReportItemIn[];
+  review_threshold: number;
+  detect_per_class?: Record<string, number> | null;
+  classify_per_class?: Record<string, number> | null;
+  classify_flagged_count?: number | null;
+}

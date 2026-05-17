@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -12,21 +14,36 @@ import type { BatchAggregate, BatchResultItem } from "@/lib/batch";
 import { colourFor } from "@/lib/predict-palette";
 import { cn } from "@/lib/utils";
 
+export interface BatchTableProps {
+  items: BatchResultItem[];
+  reviewThreshold: number;
+  selectedIndex: number | null;
+  onSelect: (index: number) => void;
+  /** Slot rendered in the card header, typically export buttons. */
+  toolbar?: ReactNode;
+}
+
 export function BatchTable({
   items,
   reviewThreshold,
-}: {
-  items: BatchResultItem[];
-  reviewThreshold: number;
-}) {
+  selectedIndex,
+  onSelect,
+  toolbar,
+}: BatchTableProps) {
   if (!items.length) return null;
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Per-image results</CardTitle>
-        <CardDescription>
-          {items.length} image{items.length === 1 ? "" : "s"} processed.
-        </CardDescription>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-base">Per-image results</CardTitle>
+            <CardDescription>
+              {items.length} image{items.length === 1 ? "" : "s"} processed. Click a row
+              to preview its predictions above.
+            </CardDescription>
+          </div>
+          {toolbar}
+        </div>
       </CardHeader>
       <CardContent>
         <div className="max-h-[420px] overflow-auto">
@@ -41,9 +58,20 @@ export function BatchTable({
             </thead>
             <tbody>
               {items.map((item) => {
+                const isSelected = item.index === selectedIndex;
+                const baseRowClass = cn(
+                  "cursor-pointer border-t border-surface-muted text-ink transition-colors",
+                  isSelected
+                    ? "bg-accent-subtle/70 hover:bg-accent-subtle"
+                    : "hover:bg-surface-subtle",
+                );
                 if (!item.result) {
                   return (
-                    <tr key={item.index} className="border-t border-surface-muted text-ink">
+                    <tr
+                      key={item.index}
+                      onClick={() => onSelect(item.index)}
+                      className={baseRowClass}
+                    >
                       <td className="py-2 pr-3 font-mono text-xs">{item.filename}</td>
                       <td className="py-2 text-red-700" colSpan={3}>
                         {item.error ?? "failed"}
@@ -60,7 +88,8 @@ export function BatchTable({
                   return (
                     <tr
                       key={item.index}
-                      className="border-t border-surface-muted text-ink hover:bg-surface-subtle"
+                      onClick={() => onSelect(item.index)}
+                      className={baseRowClass}
                     >
                       <td className="py-2 pr-3 font-mono text-xs">{item.filename}</td>
                       <td className="py-2">
@@ -93,9 +122,10 @@ export function BatchTable({
                 return (
                   <tr
                     key={item.index}
+                    onClick={() => onSelect(item.index)}
                     className={cn(
-                      "border-t border-surface-muted text-ink hover:bg-surface-subtle",
-                      needsReview && "bg-amber-50/40",
+                      baseRowClass,
+                      needsReview && !isSelected && "bg-amber-50/40",
                     )}
                   >
                     <td className="py-2 pr-3 font-mono text-xs">{item.filename}</td>

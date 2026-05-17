@@ -1,12 +1,12 @@
 # VRL YOLO GUI
 
-> **Status (v0.4.0, 2026-05-17):** Phases P0–P3a complete. **Single-image**
-> and **folder-batch** inference both work for **detection** and
-> **classification**, with nine bundled clinical workflow presets
-> (histopathology + hematology). `/predict` task-switches automatically,
-> `/models` lists the library, `/changelog` surfaces per-build features
-> in the app. CSV / XLSX / PDF reports + user `.pt` import (P3b) and
-> Train modes (P4–P6) are next.
+> **Status (v0.5.0, 2026-05-17):** Phases P0–P3b complete. Predict mode is
+> feature-complete for v1: **single-image** and **folder-batch** inference
+> for **detection** and **classification**, click any row in the batch
+> table to preview that image with predictions, export **CSV / XLSX / PDF**
+> reports, import your own fine-tuned `.pt` checkpoints, and a Settings
+> page for per-device preferences. Train modes (P4–P6) and Polish /
+> Packaging / Pilot (P7–P10) are next.
 >
 > See [`CHANGELOG.md`](CHANGELOG.md) for the per-release feature list,
 > [`docs/PHASE-STATUS.md`](docs/PHASE-STATUS.md) for the phase tracker,

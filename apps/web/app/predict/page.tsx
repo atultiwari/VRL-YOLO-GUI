@@ -5,6 +5,9 @@ import {
   AlertTriangle,
   Brain,
   CheckCircle2,
+  Download,
+  FileSpreadsheet,
+  FileText,
   FolderOpen,
   Gauge,
   Image as ImageIcon,
@@ -15,6 +18,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { BatchPreview } from "@/components/predict/batch-preview";
 import {
   BatchAggregatePanel,
   BatchTable,
@@ -45,6 +49,8 @@ import {
   type BatchAggregate,
   type BatchResultItem,
 } from "@/lib/batch";
+import { exportBatchReport } from "@/lib/report-export";
+import { useSettings } from "@/lib/settings";
 import { cn, formatBytes } from "@/lib/utils";
 import type {
   DetectionResponse,
@@ -57,6 +63,7 @@ type Mode = "single" | "folder";
 
 export default function PredictPage() {
   const [mode, setMode] = useState<Mode>("single");
+  const { settings } = useSettings();
 
   // Shared controls
   const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
@@ -75,6 +82,7 @@ export default function PredictPage() {
   const [items, setItems] = useState<BatchResultItem[]>([]);
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const [batchRunning, setBatchRunning] = useState(false);
+  const [selectedBatchIndex, setSelectedBatchIndex] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const { data: modelsData, isLoading: modelsLoading } = useQuery({
@@ -153,6 +161,7 @@ export default function PredictPage() {
     abortRef.current = controller;
     setBatchRunning(true);
     setItems([]);
+    setSelectedBatchIndex(null);
     setProgress({ current: 0, total: folderFiles.length });
 
     try {
@@ -168,7 +177,15 @@ export default function PredictPage() {
           }
         },
         onItem: (item) => {
-          setItems((prev) => [...prev, item]);
+          setItems((prev) => {
+            // Auto-select the first row that produces a result so the
+            // preview pane doesn't sit empty while the rest of the batch
+            // is still running. User clicks override this immediately.
+            if (item.result && prev.length === 0) {
+              setSelectedBatchIndex(item.index);
+            }
+            return [...prev, item];
+          });
         },
       });
     } finally {
@@ -194,11 +211,13 @@ export default function PredictPage() {
     setFolderFiles(files);
     setItems([]);
     setProgress(null);
+    setSelectedBatchIndex(null);
   };
   const onFolderClear = () => {
     setFolderFiles([]);
     setItems([]);
     setProgress(null);
+    setSelectedBatchIndex(null);
   };
 
   const modelOptions = allModels.map((m) => ({
@@ -223,9 +242,9 @@ export default function PredictPage() {
           </h1>
           <p className="mt-3 max-w-2xl text-ink-muted">
             Single mode: one patch, full overlay or top-5 chart. Folder mode:
-            drop a folder, see a per-image table and aggregate roll-up.
-            Workflow presets prefill model + thresholds for common clinical
-            tasks. CSV / XLSX / PDF reports land in P3b.
+            drop a folder, click any row to preview its predictions, export
+            CSV / XLSX / PDF. Workflow presets are off by default — turn
+            them on in Settings once you&apos;ve imported a fine-tuned model.
           </p>
         </div>
         <ModeToggle mode={mode} onChange={setMode} />
@@ -233,7 +252,7 @@ export default function PredictPage() {
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[360px_1fr]">
         <aside className="flex flex-col gap-4">
-          {presets.length ? (
+          {settings.show_presets && presets.length ? (
             <PresetPicker
               presets={presets}
               selected={activePresetId}
@@ -300,8 +319,12 @@ export default function PredictPage() {
               batchRunning={batchRunning}
               reviewThreshold={conf}
               agg={aggForBatch}
+              selectedBatchIndex={selectedBatchIndex}
+              onSelectBatchIndex={setSelectedBatchIndex}
               onFolderDrop={onFolderDrop}
               onFolderClear={onFolderClear}
+              batchTask={selectedTask}
+              batchModel={selectedModel}
             />
           )}
         </div>
@@ -613,8 +636,12 @@ function FolderColumn({
   batchRunning,
   reviewThreshold,
   agg,
+  selectedBatchIndex,
+  onSelectBatchIndex,
   onFolderDrop,
   onFolderClear,
+  batchTask,
+  batchModel,
 }: {
   folderFiles: File[];
   recursive: boolean;
@@ -623,8 +650,12 @@ function FolderColumn({
   batchRunning: boolean;
   reviewThreshold: number;
   agg: BatchAggregate | null;
+  selectedBatchIndex: number | null;
+  onSelectBatchIndex: (next: number) => void;
   onFolderDrop: (files: File[]) => void;
   onFolderClear: () => void;
+  batchTask: Task | undefined;
+  batchModel: string | undefined;
 }) {
   if (!folderFiles.length) {
     return <FolderDropzone onFolder={onFolderDrop} recursive={recursive} />;
@@ -632,6 +663,16 @@ function FolderColumn({
   const pct = progress ? (progress.current / Math.max(progress.total, 1)) * 100 : 0;
   const successCount = items.filter((i) => i.result !== null).length;
   const failedCount = items.filter((i) => i.result === null).length;
+
+  // Resolve the currently-selected row's File + item via the shared
+  // folderFiles[] indexing. Both arrays use the same index space because
+  // runBatch() preserves order, so a single lookup serves both.
+  const selectedItem =
+    selectedBatchIndex !== null
+      ? items.find((i) => i.index === selectedBatchIndex)
+      : undefined;
+  const selectedFile =
+    selectedBatchIndex !== null ? folderFiles[selectedBatchIndex] : undefined;
 
   return (
     <>
@@ -697,8 +738,103 @@ function FolderColumn({
         </CardContent>
       </Card>
 
+      {items.length ? (
+        <BatchPreview
+          file={selectedFile}
+          item={selectedItem}
+          reviewThreshold={reviewThreshold}
+        />
+      ) : null}
+
       {agg ? <BatchAggregatePanel agg={agg} /> : null}
-      <BatchTable items={items} reviewThreshold={reviewThreshold} />
+
+      <BatchTable
+        items={items}
+        reviewThreshold={reviewThreshold}
+        selectedIndex={selectedBatchIndex}
+        onSelect={onSelectBatchIndex}
+        toolbar={
+          batchTask && batchModel && !batchRunning ? (
+            <ExportToolbar
+              task={batchTask}
+              model={batchModel}
+              items={items}
+              files={folderFiles}
+              reviewThreshold={reviewThreshold}
+            />
+          ) : null
+        }
+      />
     </>
+  );
+}
+
+function ExportToolbar({
+  task,
+  model,
+  items,
+  files,
+  reviewThreshold,
+}: {
+  task: Task;
+  model: string;
+  items: BatchResultItem[];
+  files: File[];
+  reviewThreshold: number;
+}) {
+  const [pending, setPending] = useState<"csv" | "xlsx" | "pdf" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const hasResults = items.some((i) => i.result !== null);
+
+  const onExport = async (format: "csv" | "xlsx" | "pdf") => {
+    setPending(format);
+    setError(null);
+    try {
+      await exportBatchReport({
+        format,
+        task,
+        model,
+        items,
+        files,
+        reviewThreshold,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setPending(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex gap-1.5">
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={!hasResults || pending !== null}
+          onClick={() => onExport("csv")}
+        >
+          {pending === "csv" ? <Spinner /> : <FileText className="size-4" />} CSV
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={!hasResults || pending !== null}
+          onClick={() => onExport("xlsx")}
+        >
+          {pending === "xlsx" ? <Spinner /> : <FileSpreadsheet className="size-4" />} XLSX
+        </Button>
+        <Button
+          size="sm"
+          disabled={!hasResults || pending !== null}
+          onClick={() => onExport("pdf")}
+        >
+          {pending === "pdf" ? <Spinner /> : <Download className="size-4" />} PDF
+        </Button>
+      </div>
+      {error ? (
+        <p className="max-w-[280px] text-right text-xs text-red-700">{error}</p>
+      ) : null}
+    </div>
   );
 }

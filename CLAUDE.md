@@ -17,15 +17,23 @@ background. Success = doctor installs one binary, drops a folder of slide
 patches, gets annotated images (detect) or a prediction table + PDF (classify)
 in under 10 minutes.
 
-**Status (v0.4.0, 2026-05-17):**
+**Status (v0.5.0, 2026-05-17):**
 - ✅ Pre — `CLAUDE.md` entry guide (`9bd0b83`)
 - ✅ **P0** — Scaffolding · `v0.1-p0-scaffolding` (`d06e9e2`)
 - ✅ **P1** — Predict (Detection) · `v0.2-p1-predict-detect` (`2acd8f5`)
 - ✅ P1.fix-1 — Cold-start race fix (`427093d`)
 - ✅ **P2** — Predict (Classification) · `v0.3-p2-predict-classify` (`455efc8`)
 - ✅ Topbar version fix (`e62d8d2`)
-- ✅ **P3a** — Predict v1: batch + workflow presets · `v0.4-p3a-predict-batch`
-- ⏳ **P3b next** — Predict v1: reports + user model import
+- ✅ **P3a** — Predict v1: batch + workflow presets · `v0.4-p3a-predict-batch` (`84dc3f8`)
+- ✅ **P3b** — Predict v1: reports, import & settings · `v0.5-p3b-predict-reports`
+- ⏳ **P4a next** — Train (Detection) wizard + configure page
+
+**P3b also shipped three user-requested extras:**
+- Settings page (sidebar + localStorage hook)
+- Folder-batch image preview on row click
+- Workflow presets hidden by default — re-open tracked in
+  [`project_presets_revisit`](file:///Users/atultiwari/.claude/projects/-Users-atultiwari-Downloads-Projects-YOLO-GUI/memory/project_presets_revisit.md)
+  (memory). Remind the user when P10 begins.
 
 Live status snapshot is in [`docs/PHASE-STATUS.md`](docs/PHASE-STATUS.md);
 per-build feature list is in [`CHANGELOG.md`](CHANGELOG.md) (also surfaced

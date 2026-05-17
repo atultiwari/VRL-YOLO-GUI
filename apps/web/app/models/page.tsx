@@ -1,8 +1,15 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Cpu, Microscope, Brain, Star } from "lucide-react";
-import { useState } from "react";
+import {
+  Brain,
+  Check,
+  Cpu,
+  Microscope,
+  Star,
+  Upload,
+} from "lucide-react";
+import { useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +22,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { fetchModels, setDefaultModel } from "@/lib/api";
+import { fetchModels, importModel, setDefaultModel } from "@/lib/api";
 import { cn, formatBytes, formatParams } from "@/lib/utils";
 import type { ModelInfo, Task } from "@/lib/types";
 
@@ -130,8 +137,8 @@ function TaskSection({
       {models.length === 0 ? (
         <div className="rounded-xl border border-dashed border-surface-muted bg-surface-subtle p-10 text-center text-sm text-ink-muted">
           {task === "classify"
-            ? "Classification weights land in P2 — fetch them via `scripts/fetch-models.py --task classify`."
-            : "No detection models yet. Run `scripts/fetch-models.py --task detect`."}
+            ? "No classification models yet. Fetch them via `scripts/fetch-models.py --task classify`, or import your own .pt above."
+            : "No detection models yet. Fetch them via `scripts/fetch-models.py --task detect`, or import your own .pt above."}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -147,6 +154,68 @@ function TaskSection({
         </div>
       )}
     </section>
+  );
+}
+
+function ImportButton() {
+  const queryClient = useQueryClient();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [lastImported, setLastImported] = useState<string | null>(null);
+
+  const importMutation = useMutation({
+    mutationFn: importModel,
+    onSuccess: async (data) => {
+      setLastImported(data.name);
+      setError(null);
+      await queryClient.invalidateQueries({ queryKey: ["models"] });
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : "Import failed");
+      setLastImported(null);
+    },
+  });
+
+  const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset the input so re-selecting the same file fires onChange again.
+    e.target.value = "";
+    if (!file) return;
+    setError(null);
+    importMutation.mutate(file);
+  };
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Button
+        size="sm"
+        disabled={importMutation.isPending}
+        onClick={() => inputRef.current?.click()}
+      >
+        {importMutation.isPending ? (
+          <>
+            <Spinner /> Importing…
+          </>
+        ) : (
+          <>
+            <Upload className="size-4" /> Import .pt
+          </>
+        )}
+      </Button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".pt,application/octet-stream"
+        className="hidden"
+        onChange={onChange}
+      />
+      {lastImported ? (
+        <p className="text-xs text-clinical">Imported {lastImported}</p>
+      ) : null}
+      {error ? (
+        <p className="max-w-[320px] text-right text-xs text-red-700">{error}</p>
+      ) : null}
+    </div>
   );
 }
 
@@ -187,11 +256,12 @@ export default function ModelsPage() {
             once, then Predict picks it up automatically.
           </p>
         </div>
-        <div className="hidden gap-2 md:flex">
+        <div className="flex flex-col items-end gap-3">
           <Badge tone="subtle">
             <Cpu className="mr-1 size-3" />
             {data ? `${data.models.length} model${data.models.length === 1 ? "" : "s"}` : "—"}
           </Badge>
+          <ImportButton />
         </div>
       </header>
 

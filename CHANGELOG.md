@@ -12,6 +12,27 @@ for the running tracker.
 
 ---
 
+## [0.5.0] — 2026-05-17 · P3b: Predict — Reports, Import & Settings
+
+**Tag:** `v0.5-p3b-predict-reports`
+
+### Added
+- **Settings page** (new `/settings` route, sidebar entry under "Preferences") with localStorage-backed preferences via the `useSettings()` hook. First toggle: show / hide clinical workflow presets in `/predict`.
+- **Workflow presets hidden by default** — the bundled COCO/ImageNet weights don't have clinical class names yet, so the presets prefilled sensible thresholds but produced misleading detections. Tracked to re-open in P10 once we ship fine-tuned demo weights (memory: `project_presets_revisit`).
+- **Folder-batch image preview** — click any row in the per-image table to see that file's image with detection boxes or the classify top-5 chart in a preview pane above the aggregate. Auto-selects the first successful result so the preview is never empty after a run.
+- **Report generators** (`server/vrl_yolo/engine/reports.py`): task-aware CSV (per-image table), XLSX (per-image + aggregate sheets), and PDF (cover + summary + thumbnail grid + per-image table). ReportLab + OpenPyXL — no new dependencies.
+- **`/api/reports/{csv,xlsx,pdf}`** endpoints accept the batch results as JSON and stream the rendered file with the right `Content-Disposition` so the browser downloads directly.
+- **Export toolbar** (CSV / XLSX / PDF buttons) in the batch table card. The PDF button resizes up to 12 representative images to 480 px JPEG client-side and base64-embeds them so the report has a thumbnail grid.
+- **User model import** — `POST /api/models/import` accepts a `.pt` checkpoint, reads `model.task` + class names via Ultralytics, places it in `<storage_root>/models/<task>/`, refreshes the registry. Frontend Import button on `/models` triggers the upload and invalidates the `['models']` query so the new card appears.
+- **Topbar pill** now reads `v0.5.0 · predict — reports, import & settings` via the shared `useLiveVersion()` hook.
+
+### Known limitations (deferred)
+- Sliders still re-run on click only — live update deferred to a future polish pass.
+- PDF thumbnail grid caps at 12 samples per report. Curated selection arrives with per-image flag annotations.
+- No streaming batch WS endpoint yet — client-side iteration continues. Will land when Train (P4) needs WS plumbing.
+
+---
+
 ## [0.4.0] — 2026-05-17 · P3a: Predict — Batch & Workflow Presets
 
 **Tag:** `v0.4-p3a-predict-batch`
@@ -95,6 +116,7 @@ for the running tracker.
 
 ---
 
+[0.5.0]: https://github.com/atultiwari/VRL-YOLO-GUI/releases/tag/v0.5-p3b-predict-reports
 [0.4.0]: https://github.com/atultiwari/VRL-YOLO-GUI/releases/tag/v0.4-p3a-predict-batch
 [0.3.0]: https://github.com/atultiwari/VRL-YOLO-GUI/releases/tag/v0.3-p2-predict-classify
 [0.2.1]: https://github.com/atultiwari/VRL-YOLO-GUI/commit/427093d
