@@ -13,7 +13,7 @@
 | P1.fix-1 — Cold-start race fix | ✅ done | — | `427093d` |
 | **P2 — Predict (Classification)** | ✅ done | `v0.3-p2-predict-classify` | `455efc8` |
 | Topbar fix — live version | ✅ done | — | `e62d8d2` |
-| **P3a — Predict v1: batch + presets** | ✅ done | `v0.4-p3a-predict-batch` | TBD |
+| **P3a — Predict v1: batch + presets** | ✅ done | `v0.4-p3a-predict-batch` | `84dc3f8` |
 | P3b — Predict v1: reports + import | ⏳ next | — | — |
 | P4a — Train (Detection) wizard | ⏳ pending | — | — |
 | P4b — Train (Detection) local run | ⏳ pending | — | — |
