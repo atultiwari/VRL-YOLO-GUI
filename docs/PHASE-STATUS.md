@@ -22,7 +22,7 @@
 | P4b.fix-1 — Models download + rename + ml-import safety net | ✅ done | — | `2c0ced6` |
 | **P5 — Train (Classification)** | ✅ done | `v0.8-p5-train-classify` | `1d104f7` |
 | P5.fix-1 — macOS Cmd+Q event-filter shutdown (regressed startup; superseded by P5.fix-2) | ⚠️ superseded | `v0.8.1` | `543b40d` |
-| P5.fix-2 — Window-scoped close filter | ✅ done | `v0.8.2` | `0000000` |
+| P5.fix-2 — Window-scoped close filter | ✅ done | `v0.8.2` | `5bc93cc` |
 | P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
@@ -419,7 +419,7 @@ End-to-end smoke: 16-image + 16-val ImageFolder, 1 epoch, YOLO26n-cls on Apple S
 
 **Regression:** the binary built from this fix booted (download handler ran, Pyloid logged "Icon is not set."), then exited silently before reaching `pyloid.run()`. Diagnosed and replaced in P5.fix-2 below.
 
-### ✅ P5.fix-2 — Window-scoped close filter · `v0.8.2` · `0000000`
+### ✅ P5.fix-2 — Window-scoped close filter · `v0.8.2` · `5bc93cc`
 
 **Trigger:** v0.8.1 (P5.fix-1) made the app worse — it stopped reaching `pyloid.run()` at all on macOS, exiting silently between `pyloid.create_window` and the main loop.
 

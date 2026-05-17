@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P5.fix-2",
     title: "Window-scoped close filter (P5.fix-1 startup regression)",
     tag: "v0.8.2",
-    commit: "0000000",
+    commit: "5bc93cc",
     date: "2026-05-17",
     status: "current",
     features: [],
