@@ -1,9 +1,14 @@
 # VRL YOLO GUI
 
-> **Status:** Phase 0 — Scaffolding (2026-05-17). The Pyloid window opens
-> and the FastAPI backend responds at `/api/health`; everything else is
-> stubbed. See [PLAN.md](PLAN.md) for the full roadmap and
-> [CLAUDE.md](CLAUDE.md) for the session entry guide.
+> **Status:** Phase 1 — Predict (Detection) complete (2026-05-17).
+> Single-image detection works end-to-end with bundled YOLO26 / YOLOv8
+> weights; `/predict` renders boxes + counts, `/models` lists the
+> library. Classification (P2), batch + reports (P3), and Train modes
+> (P4–P6) are next.
+>
+> See [`docs/PHASE-STATUS.md`](docs/PHASE-STATUS.md) for the per-phase
+> tracker, [`PLAN.md`](PLAN.md) for the full roadmap, and
+> [`CLAUDE.md`](CLAUDE.md) for the session entry guide.
 
 A clinician-facing desktop toolkit demonstrating two YOLO tasks in
 **histopathology** and **hematology**:
@@ -64,22 +69,35 @@ VRL-YOLO-GUI/
 
 ```bash
 # 1. Install Python + Node dependencies
-uv sync --extra dev --extra desktop          # later: also `--extra ml`
+uv sync --extra dev --extra desktop --extra ml   # `ml` pulls torch + ultralytics (~2 GB)
 pnpm install
 
-# 2. Run the FastAPI backend + Next.js dev server side-by-side
+# 2. Fetch the bundled detection starter weights (~53 MB)
+python scripts/fetch-models.py --task detect
+
+# 3. Run the FastAPI backend + Next.js dev server side-by-side
 python scripts/run-web.py
 # Backend  → http://127.0.0.1:8000/api/health
 # Frontend → http://localhost:3000
 
-# 3. Or launch the Pyloid desktop window (auto-builds the static export)
+# 4. Or launch the Pyloid desktop window (auto-builds the static export)
 python scripts/run-desktop.py
 
-# 4. Build an unsigned release binary for the current OS
-python scripts/build-release.py --clean
+# 5. Build an unsigned release binary for the current OS
+python scripts/build-release.py --clean-build
 # Artifact: dist/VRL YOLO GUI.app  (macOS)
 #        or dist/VRL YOLO GUI.exe  (Windows)
 ```
+
+### Common run-script flags
+
+| Flag | Wipes | Use when |
+|---|---|---|
+| `--clean` | The user-data dir (`Application Support` / `AppData` / XDG) | Resetting settings, imported models, or trained-run outputs. |
+| `--clean-build` | `apps/web/.next` + `apps/web/out` | Frontend cache is stale, or you want to verify the cold-build path. |
+| `--rebuild` | _(nothing)_ — just re-runs `pnpm --filter web build` | Cache is fine but you want a fresh build step. |
+
+`build-release.py --clean` also wipes `dist/` + `build/` + stale top-level `*.spec`; `build-release.py --clean-build` does that **and** the frontend cache.
 
 ## License
 

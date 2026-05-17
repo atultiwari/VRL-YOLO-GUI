@@ -6,7 +6,8 @@
 
 Usage:
     python scripts/run-web.py
-    python scripts/run-web.py --clean   # wipe ./data first
+    python scripts/run-web.py --clean        # wipe ./data first
+    python scripts/run-web.py --clean-build  # wipe apps/web/.next + out
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from _common import (  # noqa: E402
     popen,
     supervised,
     uv_run,
+    wipe_build_artifacts,
     wipe_storage,
 )
 
@@ -36,7 +38,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--clean",
         action="store_true",
-        help="Wipe ./data before starting",
+        help="Wipe ./data (web-mode storage root) before starting.",
+    )
+    parser.add_argument(
+        "--clean-build",
+        action="store_true",
+        help=(
+            "Wipe apps/web/.next and apps/web/out so the Next.js dev server "
+            "starts from a cold cache."
+        ),
     )
     return parser.parse_args()
 
@@ -49,6 +59,10 @@ def main() -> int:
     if args.clean:
         banner("Cleaning local web storage")
         wipe_storage(WEB_STORAGE_DEFAULT, label="web storage")
+
+    if args.clean_build:
+        banner("Cleaning frontend build cache")
+        wipe_build_artifacts(web=True)
 
     banner("Starting VRL YOLO GUI (web mode)")
     info("Backend:  http://127.0.0.1:8000")

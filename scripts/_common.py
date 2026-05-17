@@ -214,3 +214,44 @@ def wipe_storage(path: Path, *, label: str) -> None:
         shutil.rmtree(path)
     else:
         info(f"{label} already absent: {path}")
+
+
+def wipe_build_artifacts(*, web: bool = True, release: bool = False) -> None:
+    """Delete cached build output so the next build starts from a clean slate.
+
+    `web=True` covers Next.js's `apps/web/.next/` incremental cache and the
+    `apps/web/out/` static export (the bundle that PyInstaller picks up).
+    `release=True` adds the PyInstaller intermediate dirs (`dist/`, `build/`)
+    and the auto-generated top-level `*.spec`. Both knobs are independent —
+    e.g. `--clean-build` on the run scripts wipes only the web layer; on
+    build-release.py it wipes both.
+    """
+    targets: list[Path] = []
+    if web:
+        targets += [
+            ROOT / "apps" / "web" / ".next",
+            ROOT / "apps" / "web" / "out",
+        ]
+    if release:
+        targets += [ROOT / "dist", ROOT / "build"]
+    for t in targets:
+        if t.is_dir():
+            try:
+                rel = t.relative_to(ROOT)
+            except ValueError:
+                rel = t
+            info(f"wiping build artifact: {rel}")
+            shutil.rmtree(t)
+        else:
+            try:
+                rel = t.relative_to(ROOT)
+            except ValueError:
+                rel = t
+            info(f"build artifact absent: {rel}")
+    if release:
+        # PyInstaller drops a `<AppName>.spec` next to pyproject.toml on each
+        # build. Stale specs occasionally hold references to since-removed
+        # data files, so blow them away with the rest of the release output.
+        for spec in ROOT.glob("*.spec"):
+            info(f"removing stale spec: {spec.name}")
+            spec.unlink()

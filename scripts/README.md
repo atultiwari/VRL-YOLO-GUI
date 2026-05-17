@@ -14,9 +14,14 @@ All scripts share helpers from `_common.py` and target Python 3.11+.
 
 ## Common flags
 
-- `--clean` — wipe local storage / build output before starting.
-- `--rebuild` — force a fresh `pnpm --filter web build` (run-desktop / run-both).
-- `--arch-suffix` — append `arm64` / `x64` to the artifact name (build-release).
+| Flag | Scripts | What it wipes / does |
+|---|---|---|
+| `--clean` | `run-desktop`, `run-web`, `run-both` | User-data dir (Application Support / AppData / XDG). |
+| `--clean` | `build-release` | `dist/` + `build/` + stale top-level `*.spec`. |
+| `--clean-build` | `run-desktop`, `run-web`, `run-both` | `apps/web/.next` + `apps/web/out`. Implies a rebuild (the static export is gone). |
+| `--clean-build` | `build-release` | Everything `--clean` wipes **plus** the frontend cache — use before tagging a release. |
+| `--rebuild` | `run-desktop`, `run-both` | Re-runs `pnpm --filter web build` without wiping caches first. |
+| `--arch-suffix` | `build-release` | Append `arm64` / `x64` / `x86` to the artifact name. |
 
 ## Naming convention
 

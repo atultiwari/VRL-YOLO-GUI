@@ -47,6 +47,7 @@ from _common import (  # noqa: E402
     info,
     uv_run,
     warn,
+    wipe_build_artifacts,
 )
 
 # User-facing display name — Finder bundle ("VRL YOLO GUI.app"), Windows
@@ -142,11 +143,24 @@ def set_macos_bundle_version(app_path: Path, version: str) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build an unsigned release for the current OS")
-    parser.add_argument("--clean", action="store_true", help="Wipe dist/ and build/ first")
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Wipe dist/, build/, and the stale top-level *.spec before building.",
+    )
+    parser.add_argument(
+        "--clean-build",
+        action="store_true",
+        help=(
+            "Stronger than --clean: also wipes apps/web/.next and apps/web/out "
+            "so the frontend static export is rebuilt from a cold cache. "
+            "Use this before tagging a release."
+        ),
+    )
     parser.add_argument(
         "--skip-frontend",
         action="store_true",
-        help="Use the existing apps/web/out instead of rebuilding it",
+        help="Use the existing apps/web/out instead of rebuilding it.",
     )
     parser.add_argument(
         "--onefile",
@@ -512,10 +526,14 @@ def main() -> int:
     ensure_python_deps(desktop=True, ml=True)
     ensure_node_deps()
 
-    if args.clean:
+    if args.clean or args.clean_build:
         clean()
+    if args.clean_build:
+        banner("Cleaning frontend build cache")
+        wipe_build_artifacts(web=True)
 
-    if not args.skip_frontend or not has_static_export():
+    # --skip-frontend is moot if we just nuked apps/web/out; force a rebuild.
+    if args.clean_build or not args.skip_frontend or not has_static_export():
         build_static_export()
     else:
         info("Reusing existing apps/web/out/")

@@ -7,6 +7,12 @@ Spawns three processes:
   - Desktop      : Pyloid window with its own embedded uvicorn
 
 Useful for testing dual-mode parity. Press Ctrl+C to stop everything.
+
+Usage:
+    python scripts/run-both.py
+    python scripts/run-both.py --rebuild       # rebuild static export first
+    python scripts/run-both.py --clean-build   # wipe .next + out, then rebuild
+    python scripts/run-both.py --clean         # wipe BOTH storage dirs
 """
 
 from __future__ import annotations
@@ -31,17 +37,31 @@ from _common import (  # noqa: E402
     popen,
     supervised,
     uv_run,
+    wipe_build_artifacts,
     wipe_storage,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run web + desktop in parallel")
-    parser.add_argument("--rebuild", action="store_true", help="Rebuild the static export first")
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Force a fresh `pnpm --filter web build` before starting.",
+    )
+    parser.add_argument(
+        "--clean-build",
+        action="store_true",
+        help=(
+            "Wipe apps/web/.next + apps/web/out before starting — both the "
+            "Next.js dev server and the embedded Pyloid backend get a "
+            "freshly-rebuilt static export. Implies --rebuild."
+        ),
+    )
     parser.add_argument(
         "--clean",
         action="store_true",
-        help="Wipe BOTH local web data and the desktop storage directory before starting",
+        help="Wipe BOTH the local web data dir and the desktop storage dir.",
     )
     return parser.parse_args()
 
@@ -56,7 +76,11 @@ def main() -> int:
         wipe_storage(WEB_STORAGE_DEFAULT, label="web storage")
         wipe_storage(DESKTOP_STORAGE_DEFAULT, label="desktop storage")
 
-    if args.rebuild or not has_static_export():
+    if args.clean_build:
+        banner("Cleaning frontend build cache")
+        wipe_build_artifacts(web=True)
+
+    if args.clean_build or args.rebuild or not has_static_export():
         build_static_export()
 
     banner("Starting web (backend+frontend) and desktop in parallel")

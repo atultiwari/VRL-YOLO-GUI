@@ -17,9 +17,16 @@ background. Success = doctor installs one binary, drops a folder of slide
 patches, gets annotated images (detect) or a prediction table + PDF (classify)
 in under 10 minutes.
 
-**Status (2026-05-17):** `PLAN.md` v0.5 committed. **No implementation code
-exists yet.** Do not scaffold, do not write `__init__.py`, do not "just start
-the structure" without explicit sign-off — see §6.
+**Status (2026-05-17):**
+- ✅ Pre — `CLAUDE.md` entry guide (`9bd0b83`)
+- ✅ **P0** — Scaffolding · `v0.1-p0-scaffolding` (`d06e9e2`)
+- ✅ **P1** — Predict (Detection) · `v0.2-p1-predict-detect` (`2acd8f5`)
+- ⏳ **P2 next** — Predict (Classification)
+
+Live status snapshot is in [`docs/PHASE-STATUS.md`](docs/PHASE-STATUS.md);
+the canonical roadmap stays in [`PLAN.md`](PLAN.md). The user works
+phase-by-phase and expects a commit + push at each phase boundary; do
+**not** roll multiple phases into one commit.
 
 ---
 
@@ -169,23 +176,29 @@ VRL-YOLO-GUI/
 
 ---
 
-## 8. Next concrete steps (when implementation resumes)
+## 8. Next concrete steps
 
-From `PLAN.md` §18 — P0 deliverable is "a working `.app` window opens":
+**P0 and P1 shipped.** Next phase is P2 — see
+[`docs/PHASE-STATUS.md`](docs/PHASE-STATUS.md) for the running tracker
+and per-phase verification proofs.
 
-1. Fork `VRL-ML-Studio-Lite`'s `pyproject.toml`, `pnpm-workspace.yaml`,
-   `src-pyloid/main.py`, `scripts/build-release.py`,
-   `.github/workflows/release.yml`. Strip Studio-Lite logic, rename
-   identifiers.
-2. Stand up empty `server/vrl_yolo/` + empty Next.js shell at `/`,
-   `/predict`, `/train`, `/models`.
-3. Verify P0: `.app` window opens on macOS via `python -m server` and via
-   packaged `.app`.
-4. Brand pass — logo, palette, splash (see open question in `PLAN.md` §13.6).
-5. AGPL headers + `NOTICE` + `COMMERCIAL-LICENSE.md` template.
+**P2 scope (estimated 4 days):**
 
-Do not start any of the above without confirming the user wants
-implementation to begin in this session.
+1. `engine/inference.py` — add `_run_classify` branch returning
+   `{task:"classify", top1, top5, probs}` (no boxes).
+2. `routers/inference.py` — drop the "detect only" gate; dispatch on
+   `model.task` inside the engine.
+3. Frontend `/predict` — task-switch the view: classification hides the
+   SVG overlay and shows a top-5 bar chart + "below threshold → needs
+   review" flag.
+4. `scripts/fetch-models.py --task classify` — pulls
+   `yolo26{n,s}-cls.pt` and `yolov8{n,s}-cls.pt` into
+   `models/classify/`.
+5. End-of-phase tag: `v0.3-p2-predict-classify`.
+
+Do not begin P2 (or any subsequent phase) without the user's explicit
+sign-off — the workflow is phase-by-phase with a confirm-then-start
+check at each boundary.
 
 ---
 
