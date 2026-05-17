@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P4a",
     title: "Train — Detection wizard",
     tag: "v0.6-p4a-train-detect-wizard",
-    commit: "TBD",
+    commit: "08d5f46",
     date: "2026-05-17",
     status: "current",
     features: [
