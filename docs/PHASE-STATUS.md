@@ -20,7 +20,7 @@
 | P4a.fix-1 — Dataset upload + split helper | ✅ done | — | `debf84b` |
 | **P4b — Train (Detection) local run** | ✅ done | `v0.7-p4b-train-detect-run` | `2e42d9d` |
 | P4b.fix-1 — Models download + rename + ml-import safety net | ✅ done | — | `2c0ced6` |
-| **P5 — Train (Classification)** | ✅ done | `v0.8-p5-train-classify` | `0000000` |
+| **P5 — Train (Classification)** | ✅ done | `v0.8-p5-train-classify` | `1d104f7` |
 | P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |

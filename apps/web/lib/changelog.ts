@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P5",
     title: "Train — Classification local run",
     tag: "v0.8-p5-train-classify",
-    commit: "0000000",
+    commit: "1d104f7",
     date: "2026-05-17",
     status: "current",
     features: [
