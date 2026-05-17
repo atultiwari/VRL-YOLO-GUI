@@ -31,6 +31,17 @@ class SetDefaultRequest(BaseModel):
     name: str
 
 
+class RenameModelRequest(BaseModel):
+    """Body for `POST /api/models/{name}/rename`.
+
+    `new_name` is sanitised by the router (basename only, must end with
+    `.pt`, control characters stripped). Bundled models are rejected at
+    the registry level.
+    """
+
+    new_name: str = Field(..., min_length=1, max_length=200)
+
+
 class AcceleratorOut(BaseModel):
     kind: Literal["cuda", "mps", "cpu"]
     name: str

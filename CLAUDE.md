@@ -30,6 +30,7 @@ in under 10 minutes.
 - ✅ **P4a** — Train (Detection) wizard · `v0.6-p4a-train-detect-wizard`
 - ✅ P4a.fix-1 — Roboflow upload + prepare-splits helper (`debf84b`)
 - ✅ **P4b** — Train (Detection) local run · `v0.7-p4b-train-detect-run` (`2e42d9d`) — live charts, cancel, save-to-library, class-name editor
+- ✅ P4b.fix-1 — Models download + rename + ml-import safety net
 - ⏳ **P5 next** — Train (Classification): wizard + subprocess + top-1/top-5 metric streams
 
 **P3b also shipped three user-requested extras:**

@@ -194,6 +194,60 @@ class ModelRegistry:
                     out[task] = available[0]
             return out
 
+    def rename(self, old_name: str, new_name: str) -> ModelRecord:
+        """Rename a user/trained checkpoint in place.
+
+        Bundled weights are read-only — they live in the install tree and
+        would be re-fetched by `scripts/fetch-models.py` anyway. The rest
+        sit under `<storage_root>/models/<task>/` where the user fully
+        owns the filesystem.
+
+        Side effects beyond the rename itself:
+          * Update `defaults.json` if the old name was a per-task default.
+          * Drop the warm YOLO instance from the LRU cache (the file path
+            it captured is stale).
+          * Re-scan so `_records` reflects the new name.
+        """
+        with self._lock:
+            if old_name not in self._records:
+                raise KeyError(old_name)
+            record = self._records[old_name]
+            if record.source == "bundled":
+                raise ValueError(
+                    f"{old_name!r} is a bundled model — bundled weights are read-only"
+                )
+            if new_name in self._records and new_name != old_name:
+                raise ValueError(
+                    f"a model named {new_name!r} already exists"
+                )
+            old_path = record.path
+            new_path = old_path.with_name(new_name)
+            if new_path.exists() and new_path != old_path:
+                raise ValueError(
+                    f"file already exists at {new_path.name!r}"
+                )
+
+            old_path.rename(new_path)
+
+            # If this model was a default, point defaults.json at the new name
+            # so the user's choice survives the rename.
+            if self._defaults_path.is_file():
+                try:
+                    current = json.loads(self._defaults_path.read_text())
+                except (OSError, json.JSONDecodeError):
+                    current = {}
+                touched = False
+                for task, picked in list(current.items()):
+                    if picked == old_name:
+                        current[task] = new_name
+                        touched = True
+                if touched:
+                    self._defaults_path.write_text(json.dumps(current, indent=2))
+
+            self._yolo_cache.pop(old_name, None)
+            self.scan()
+            return self._records[new_name]
+
     def set_default(self, task: Task, name: str) -> None:
         with self._lock:
             record = self.get(name)

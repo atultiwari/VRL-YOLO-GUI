@@ -5,11 +5,13 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 
 from vrl_yolo.api.deps import get_registry
 from vrl_yolo.api.schemas import (
     ModelInfo,
     ModelsListResponse,
+    RenameModelRequest,
     SetDefaultRequest,
 )
 from vrl_yolo.engine.registry import ModelLoadError, ModelRegistry
@@ -69,6 +71,72 @@ def set_default(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
+
+
+@router.get("/{name}/download")
+def download_model(
+    name: str, registry: ModelRegistry = Depends(get_registry)
+) -> FileResponse:
+    """Stream the model's `.pt` file with a download Content-Disposition.
+
+    Works for every source (bundled / user / trained). The clinician
+    wants a way to back up a freshly-trained checkpoint without spelunking
+    into `<storage_root>` themselves.
+    """
+    try:
+        record = registry.get(name)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"model {name!r} not found"
+        ) from exc
+    if not record.path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=f"checkpoint file missing on disk: {record.path}",
+        )
+    return FileResponse(
+        path=str(record.path),
+        media_type="application/octet-stream",
+        filename=record.name,
+    )
+
+
+@router.post("/{name}/rename", response_model=ModelInfo)
+def rename_model(
+    name: str,
+    body: RenameModelRequest,
+    registry: ModelRegistry = Depends(get_registry),
+) -> ModelInfo:
+    """Rename a user-imported or locally-trained checkpoint.
+
+    Bundled weights are rejected — they live in the install tree and
+    would be re-fetched by `scripts/fetch-models.py` anyway. The new
+    name is sanitised with the same rules as `/import` (basename only,
+    must end with `.pt`, control characters stripped).
+    """
+    new_name = _sanitised_basename(body.new_name)
+    if new_name == name:
+        # No-op — return the current record so the caller doesn't have
+        # to refetch.
+        try:
+            return _record_to_info(registry.get(name))
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"model {name!r} not found",
+            ) from exc
+
+    try:
+        record = registry.rename(name, new_name)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"model {name!r} not found"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return _record_to_info(record)
 
 
 def _sanitised_basename(raw: str | None) -> str:

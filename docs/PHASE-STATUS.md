@@ -19,6 +19,7 @@
 | **P4a — Train (Detection) wizard** | ✅ done | `v0.6-p4a-train-detect-wizard` | `08d5f46` |
 | P4a.fix-1 — Dataset upload + split helper | ✅ done | — | `debf84b` |
 | **P4b — Train (Detection) local run** | ✅ done | `v0.7-p4b-train-detect-run` | `2e42d9d` |
+| P4b.fix-1 — Models download + rename + ml-import safety net | ✅ done | — | `pending` |
 | P5 — Train (Classification) | ⏳ next | — | — |
 | P6 — Train on Colab | ⏳ pending | — | — |
 | P7 — Polish | ⏳ pending | — | — |

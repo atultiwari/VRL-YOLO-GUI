@@ -41,13 +41,30 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.7.1",
+    phase: "P4b.fix-1",
+    title: "Models — Download + rename + ml-import safety net",
+    tag: null,
+    commit: "0000000",
+    date: "2026-05-17",
+    status: "current",
+    features: [
+      "**Download** button on every model card in /models. Streams the `.pt` file via `GET /api/models/{name}/download` with `Content-Disposition: attachment` so QtWebEngine's downloadRequested handler (P3b.fix-1) lands it in ~/Downloads/. Works for bundled, imported, and locally-trained models alike — clinicians wanted a one-click backup of a freshly-trained checkpoint without spelunking into `<storage_root>`.",
+      "**Rename** button on imported + trained checkpoints. Inline edit on the card title; Enter saves, Esc cancels. `.pt` extension auto-appended if missing. Empty / colliding / unsanitised names are rejected on both client and backend (`POST /api/models/{name}/rename`). The rename also updates `defaults.json` so a renamed default stays the default.",
+      "Bundled weights are read-only (the install tree gets re-fetched by `scripts/fetch-models.py` anyway), so the Rename button doesn't show on bundled cards — only Download.",
+    ],
+    fixes: [
+      "When the venv is built without the `ml` extra, `/api/models` used to return 500 because the `from ultralytics import YOLO` inside `registry._inspect()` raised an uncaught `ModuleNotFoundError`. Now the import lives inside the try block and `ImportError` becomes a clean `ModelLoadError`; the scan loop drops the failing entry and `/api/models` returns an empty list with 200, so the frontend renders the friendly \"No detection models — run scripts/fetch-models.py --task detect\" message instead of a generic error page.",
+    ],
+  },
+  {
     version: "0.7.0",
     phase: "P4b",
     title: "Train — Detection local run",
     tag: "v0.7-p4b-train-detect-run",
     commit: "2e42d9d",
     date: "2026-05-17",
-    status: "current",
+    status: "shipped",
     features: [
       "**Local training actually runs.** Press \"Start training\" on /train/configure and the backend spawns an Ultralytics subprocess against your dataset. Per-epoch metrics stream live to /train/run via WebSocket with two Recharts curves (box/cls/dfl loss + mAP50 / mAP50-95), a progress bar, and a scrolling log tail.",
       "**Class-name editor** on /train/configure — rename each class in place before training. Names are written into the dataset's `data.yaml` and embedded in the trained checkpoint so /predict shows them automatically. Empty / duplicate names are rejected on both client and backend.",

@@ -159,6 +159,31 @@ export async function importModel(file: File): Promise<ImportedModelResponse> {
   });
 }
 
+/**
+ * Rename a user-imported or trained checkpoint in place. Bundled
+ * weights are rejected on the backend.
+ */
+export async function renameModel(
+  name: string,
+  newName: string,
+): Promise<ModelInfo> {
+  return fetchJson(`${API_BASE}/models/${encodeURIComponent(name)}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ new_name: newName }),
+  });
+}
+
+/**
+ * Build the URL the browser hits to download a model's `.pt` file.
+ * Returned as a string so the caller can stuff it into an `<a download>`
+ * — QtWebEngine's downloadRequested handler (P3b.fix-1) auto-accepts it
+ * into `~/Downloads/`.
+ */
+export function modelDownloadUrl(name: string): string {
+  return `${API_BASE}/models/${encodeURIComponent(name)}/download`;
+}
+
 // --- Train wizard ------------------------------------------------------
 
 export async function fetchHardware(

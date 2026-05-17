@@ -12,6 +12,20 @@ for the running tracker.
 
 ---
 
+## [0.7.1] — 2026-05-17 · P4b.fix-1: Models — Download + rename + ml-import safety net
+
+No tag — between-phase patch.
+
+### Added
+- **Download** button on every model card in `/models`. Streams the `.pt` via `GET /api/models/{name}/download` with `Content-Disposition: attachment` so QtWebEngine's `downloadRequested` handler (P3b.fix-1) lands it in `~/Downloads/`. Works for bundled, imported, and locally-trained models alike — clinicians wanted a one-click backup of a freshly-trained checkpoint without spelunking into `<storage_root>`.
+- **Rename** button on imported + trained checkpoints. Inline edit on the card title; Enter saves, Esc cancels. `.pt` extension auto-appended if missing. Empty / colliding / unsanitised names are rejected on both client and backend (`POST /api/models/{name}/rename`). The rename also updates `defaults.json` so a renamed default stays the default.
+- Bundled weights are read-only (the install tree gets re-fetched by `scripts/fetch-models.py`), so the Rename button doesn't show on bundled cards — only Download.
+
+### Fixed
+- **`/api/models` no longer 500s when the `ml` extra is missing.** `registry._inspect()` had the `from ultralytics import YOLO` outside its `try` block, so a `ModuleNotFoundError` (typical after a `uv sync --extra dev --extra desktop` without `--extra ml`) bubbled up uncaught. The import is now inside the try and `ImportError` becomes a clean `ModelLoadError`; the scan loop drops the failing entry, `/api/models` returns an empty list with 200, and the frontend renders the friendly "No detection models — run scripts/fetch-models.py --task detect" message instead of a generic error page.
+
+---
+
 ## [0.7.0] — 2026-05-17 · P4b: Train — Detection local run
 
 **Tag:** `v0.7-p4b-train-detect-run`

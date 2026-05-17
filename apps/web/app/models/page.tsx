@@ -2,12 +2,16 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   Brain,
   Check,
   Cpu,
+  Download,
   Microscope,
+  PencilLine,
   Star,
   Upload,
+  X,
 } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -22,7 +26,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { fetchModels, importModel, setDefaultModel } from "@/lib/api";
+import {
+  ApiError,
+  fetchModels,
+  importModel,
+  modelDownloadUrl,
+  renameModel,
+  setDefaultModel,
+} from "@/lib/api";
 import { cn, formatBytes, formatParams } from "@/lib/utils";
 import type { ModelInfo, Task } from "@/lib/types";
 
@@ -43,14 +54,81 @@ function ModelCard({
   onSetDefault: (model: ModelInfo) => void;
   pendingDefault: boolean;
 }) {
+  const queryClient = useQueryClient();
   const classList = Object.values(model.classes).slice(0, 4).join(", ");
   const more = Math.max(0, model.num_classes - 4);
+  const canRename = model.source !== "bundled";
+
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [draft, setDraft] = useState(model.name);
+  const [renameError, setRenameError] = useState<string | null>(null);
+
+  const rename = useMutation({
+    mutationFn: async () => {
+      let next = draft.trim();
+      if (!next) throw new Error("name can't be empty");
+      if (!next.toLowerCase().endsWith(".pt")) next = `${next}.pt`;
+      return renameModel(model.name, next);
+    },
+    onSuccess: async () => {
+      setIsRenaming(false);
+      setRenameError(null);
+      await queryClient.invalidateQueries({ queryKey: ["models"] });
+    },
+    onError: (err) => {
+      setRenameError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+          ? err.message
+          : "Rename failed",
+      );
+    },
+  });
+
+  const startRename = () => {
+    setDraft(model.name);
+    setRenameError(null);
+    setIsRenaming(true);
+  };
+
+  const cancelRename = () => {
+    setIsRenaming(false);
+    setRenameError(null);
+  };
+
+  const onDownload = () => {
+    // Use a real anchor click so QtWebEngine's downloadRequested handler
+    // (src-pyloid/main.py) picks it up and lands the file in ~/Downloads/.
+    const a = document.createElement("a");
+    a.href = modelDownloadUrl(model.name);
+    a.download = model.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
 
   return (
     <Card className={cn(isDefault && "border-accent ring-1 ring-accent/30")}>
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
-          <CardTitle className="truncate">{model.name}</CardTitle>
+          {isRenaming ? (
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              disabled={rename.isPending}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") rename.mutate();
+                if (e.key === "Escape") cancelRename();
+              }}
+              className="h-8 flex-1 min-w-0 rounded-md border border-surface-muted bg-surface px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            />
+          ) : (
+            <CardTitle className="truncate" title={model.name}>
+              {model.name}
+            </CardTitle>
+          )}
           {isDefault ? (
             <Badge tone="accent" className="shrink-0">
               <Star className="mr-1 size-3 fill-current" />
@@ -79,26 +157,84 @@ function ModelCard({
           <span>Size</span>
           <span className="font-medium text-ink">{formatBytes(model.size_mb)}</span>
         </div>
+        {renameError ? (
+          <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-800">
+            <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+            <span>{renameError}</span>
+          </div>
+        ) : null}
       </CardContent>
-      <CardFooter>
-        <Button
-          variant={isDefault ? "ghost" : "secondary"}
-          size="sm"
-          disabled={isDefault || pendingDefault}
-          onClick={() => onSetDefault(model)}
-        >
-          {isDefault ? (
-            <>
-              <Check className="size-4" /> default
-            </>
-          ) : pendingDefault ? (
-            <>
-              <Spinner /> setting…
-            </>
-          ) : (
-            "Set as default"
-          )}
-        </Button>
+      <CardFooter className="flex flex-wrap items-center gap-2">
+        {isRenaming ? (
+          <>
+            <Button
+              size="sm"
+              disabled={
+                rename.isPending ||
+                draft.trim() === "" ||
+                draft.trim() === model.name
+              }
+              onClick={() => rename.mutate()}
+            >
+              {rename.isPending ? (
+                <>
+                  <Spinner /> Saving…
+                </>
+              ) : (
+                <>
+                  <Check className="size-4" /> Save
+                </>
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={rename.isPending}
+              onClick={cancelRename}
+            >
+              <X className="size-4" /> Cancel
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              variant={isDefault ? "ghost" : "secondary"}
+              size="sm"
+              disabled={isDefault || pendingDefault}
+              onClick={() => onSetDefault(model)}
+            >
+              {isDefault ? (
+                <>
+                  <Check className="size-4" /> default
+                </>
+              ) : pendingDefault ? (
+                <>
+                  <Spinner /> setting…
+                </>
+              ) : (
+                "Set as default"
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onDownload}
+              title={`Download ${model.name}`}
+            >
+              <Download className="size-4" /> Download
+            </Button>
+            {canRename ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={startRename}
+                title="Rename this checkpoint"
+              >
+                <PencilLine className="size-4" /> Rename
+              </Button>
+            ) : null}
+          </>
+        )}
       </CardFooter>
     </Card>
   );
