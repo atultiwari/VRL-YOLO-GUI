@@ -21,7 +21,7 @@
 | **P4b — Train (Detection) local run** | ✅ done | `v0.7-p4b-train-detect-run` | `2e42d9d` |
 | P4b.fix-1 — Models download + rename + ml-import safety net | ✅ done | — | `2c0ced6` |
 | **P5 — Train (Classification)** | ✅ done | `v0.8-p5-train-classify` | `1d104f7` |
-| P5.fix-1 — macOS Cmd+Q event-filter shutdown | ✅ done | — | `0000000` |
+| P5.fix-1 — macOS Cmd+Q event-filter shutdown | ✅ done | `v0.8.1` | `543b40d` |
 | P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
@@ -389,7 +389,7 @@ End-to-end smoke: 16-image + 16-val ImageFolder, 1 epoch, YOLO26n-cls on Apple S
 - Multi-tenant training is still out of scope; one in-flight job per JobManager.
 - Colab tunnel handoff for classify (PLAN.md §11) lands in P6 alongside detect.
 
-### ✅ P5.fix-1 — macOS Cmd+Q event-filter shutdown · `0000000`
+### ✅ P5.fix-1 — macOS Cmd+Q event-filter shutdown · `v0.8.1` · `543b40d`
 
 **Trigger:** v0.7.1 (and v0.8.0) crashed on Cmd+Q with `EXC_BAD_ACCESS / KERN_INVALID_ADDRESS at 0x0` in `QSurface::~QSurface` → `QOpenGLContext::currentContext()` → `QThreadStorageData::get()`, deep inside `__cxa_finalize_ranges` triggered by `-[NSApplication terminate:]`. Frame-for-frame identical to the documented crash in [`python-pyloid-desktop-packaging` skill §macOS quit-time crash](file:///Users/atultiwari/.claude/skills/python-pyloid-desktop-packaging/SKILL.md).
 
