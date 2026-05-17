@@ -12,6 +12,21 @@ for the running tracker.
 
 ---
 
+## [0.8.4] — 2026-05-18 · P5.fix-4: Subprocess env-var dispatch (Train opened a second app + stuck at epoch 0)
+
+**Tag:** `v0.8.4`
+
+### Fixed
+- **Pressing Start training no longer spawns a second Pyloid window, and the training subprocess no longer stalls at "Waiting for first epoch…".** Both symptoms were the same root cause: `JobManager.start()` spawned the training subprocess with `[sys.executable, "-m", "vrl_yolo.engine.train_runner", ...]`. That works fine in dev (where `sys.executable` is `python3.11`), but PyInstaller's bootloader in the frozen `.app` IGNORES `-m module` and just re-runs the bundled entry script — so the subprocess booted a second Pyloid window instead of the training runner, and the parent JobManager sat there waiting for events on a stdout that would never produce any.
+- Fix: env-var sentinel. `src-pyloid/main.py` now reads `VRL_YOLO_GUI_SUBPROCESS` at boot (after `multiprocessing.freeze_support()`) and, when set to `"train_runner"`, dispatches to `train_runner.main()` directly — skipping the entire Pyloid / uvicorn boot. `JobManager.start()` sets that env var in the child env (`_child_env()`) and switches the cmd from `-m module` to positional argv. Dev mode passes `main.py` explicitly so python has a script to run; frozen mode uses the bundled binary directly. Same dispatch path in both, so dev runs exercise the same code the frozen `.app` will hit.
+- Defensive: dispatch also bails out if `--multiprocessing-fork` appears in `sys.argv`, in case a future CPython release changes when `freeze_support()` intercepts mp-worker spawn args. Belt and braces.
+
+### Known limitations (deferred)
+- Same as v0.8.3: in-flight training subprocess is reparented to launchd on Cmd+Q. Follow-up.
+- Module-level `_MAIN_PY = Path(__file__).resolve().parents[3] / "src-pyloid" / "main.py"` assumes training.py lives at `<repo>/server/vrl_yolo/engine/training.py` in dev. If the layout ever shifts, dev runs will raise a clear `RuntimeError("src-pyloid/main.py not found at ...")` at training-start time. Frozen mode doesn't care — it uses the bundled binary directly.
+
+---
+
 ## [0.8.3] — 2026-05-18 · P5.fix-3: Flat ImageFolder support + Prepare splits for classify + layout examples
 
 **Tag:** `v0.8.3`

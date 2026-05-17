@@ -1,7 +1,7 @@
 # Phase Status
 
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones).
-> Updated at the end of each phase boundary. **Last edit: 2026-05-18 (P5.fix-3 — flat ImageFolder + classify splitter + layout examples).**
+> Updated at the end of each phase boundary. **Last edit: 2026-05-18 (P5.fix-4 — subprocess env-var dispatch).**
 
 ## Snapshot
 
@@ -24,6 +24,7 @@
 | P5.fix-1 — macOS Cmd+Q event-filter shutdown (regressed startup; superseded by P5.fix-2) | ⚠️ superseded | `v0.8.1` | `543b40d` |
 | P5.fix-2 — Window-scoped close filter | ✅ done | `v0.8.2` | `5bc93cc` |
 | P5.fix-3 — Flat ImageFolder + classify splitter + layout examples | ✅ done | `v0.8.3` | `72dc1db` |
+| P5.fix-4 — Subprocess env-var dispatch (frozen `-m` bug) | ✅ done | `v0.8.4` | `0000000` |
 | P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
@@ -501,6 +502,33 @@ best_pt: <storage>/training/<job>/weights/best.pt
 **Carried-forward:**
 - Layout examples are static ASCII trees. A future polish pass could swap for SVG or render real previews of the user's dropped folder.
 - Splitter is all-or-nothing: it merges ALL source images (flat + any pre-existing splits) and re-shuffles. If a user wants to PRESERVE a hand-curated train/val and just generate a missing test, they can't. Acceptable for v1; revisit if pilot feedback asks.
+
+### ✅ P5.fix-4 — Subprocess env-var dispatch · `v0.8.4` · `0000000`
+
+**Trigger:** v0.8.3 binary shipped a working classify dataset wizard, but pressing **Start training** in the `.app` produced two symptoms:
+
+1. A second Pyloid window opened on the screen (sometimes briefly, sometimes lingering).
+2. The training page showed `Epoch 0 / 5 · 0.0%` indefinitely with "Waiting for first epoch…" under both charts. WebSocket said `running ws · live` but no events ever arrived.
+
+**Root cause:** `JobManager.start()` spawned the training subprocess with:
+
+```python
+cmd = [sys.executable, "-m", "vrl_yolo.engine.train_runner", ...]
+```
+
+In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runner` works. **In the frozen `.app`, `sys.executable` is the bundle's main binary, and PyInstaller's bootloader does not honour `-m module` — it always runs the originally-bundled entry script.** So the subprocess re-launched `main.py` → Pyloid window #2 (visible bug 1). The runner never ran, no JSON events were emitted on stdout, the parent JobManager's reader thread waited forever (visible bug 2). Both v0.7.x detect training and v0.8.x classify training had this bug; the user just hadn't exercised training inside the `.app` until now.
+
+**Fix:** env-var sentinel + frozen-aware cmd shape.
+
+| # | Subject | Outcome |
+|---|---|---|
+| P5.fix-4.1 | `_maybe_dispatch_subprocess()` in main.py | Reads `VRL_YOLO_GUI_SUBPROCESS` after `multiprocessing.freeze_support()`. When set to `"train_runner"`, imports `train_runner.main` lazily and `raise SystemExit(runner_main())` — never reaches Pyloid boot. Defensive `--multiprocessing-fork` argv check to avoid mis-dispatching real mp workers if a future CPython changes freeze_support timing. |
+| P5.fix-4.2 | JobManager spawn rewrite | Cmd is now `[sys.executable, *entry_args, --dataset, ...]` where `entry_args = [str(_MAIN_PY)]` in dev and `[]` in frozen. `_child_env()` sets `VRL_YOLO_GUI_SUBPROCESS=train_runner` unconditionally. `_MAIN_PY` resolved once at module load from `Path(__file__).resolve().parents[3] / "src-pyloid" / "main.py"`. |
+| P5.fix-4.3 | End-to-end repro | Two smokes in dev, both passing. Classify against `lung_partial`: spawn → start/epoch/complete events streamed → `top1=0.333, top5=1.000`. Detect regression against a tiny synthetic dataset: same — start/epoch/complete events → `mAP50=0.0` (1 fake box, 1 epoch, expected) → status=completed. The dev path now exercises the SAME dispatch the frozen `.app` will hit, so a regression in either mode is caught locally before binary build. |
+
+**Carried-forward:**
+- Same training-subprocess-orphan-on-Cmd+Q gap as P5.fix-1 through P5.fix-3.
+- The `parents[3]` walk in dev mode is fragile if the repo layout ever shifts. We raise a clear `RuntimeError("src-pyloid/main.py not found at ...")` at training-start time if the path is wrong, but the better long-term fix is to plumb the entry path through Settings at app startup so JobManager doesn't have to guess.
 
 ---
 

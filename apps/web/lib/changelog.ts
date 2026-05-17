@@ -41,13 +41,32 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.8.4",
+    phase: "P5.fix-4",
+    title: "Subprocess env-var dispatch (Train opened a second app + stuck at epoch 0)",
+    tag: "v0.8.4",
+    commit: "0000000",
+    date: "2026-05-18",
+    status: "current",
+    features: [],
+    fixes: [
+      "**Pressing Start training no longer spawns a second Pyloid window, and the training subprocess no longer stalls at \"Waiting for first epoch…\".** Both symptoms were the same root cause: `JobManager.start()` spawned the training subprocess with `[sys.executable, \"-m\", \"vrl_yolo.engine.train_runner\", ...]`. That works fine in dev (where `sys.executable` is `python3.11`), but PyInstaller's bootloader in the frozen `.app` IGNORES `-m module` and just re-runs the bundled entry script — so the subprocess booted a second Pyloid window instead of the training runner, and the parent JobManager sat there waiting for events on a stdout that would never produce any.",
+      "Fix: env-var sentinel. `src-pyloid/main.py` now reads `VRL_YOLO_GUI_SUBPROCESS` at boot (after `multiprocessing.freeze_support()`) and, when set to `\"train_runner\"`, dispatches to `train_runner.main()` directly — skipping the entire Pyloid / uvicorn boot. `JobManager.start()` sets that env var in the child env (`_child_env()`) and switches the cmd from `-m module` to positional argv. Dev mode passes `main.py` explicitly so python has a script to run; frozen mode uses the bundled binary directly. Same dispatch path in both, so dev runs exercise the same code the frozen `.app` will hit.",
+      "Defensive: dispatch also bails out if `--multiprocessing-fork` appears in `sys.argv`, in case a future CPython release changes when `freeze_support()` intercepts mp-worker spawn args. Belt and braces.",
+    ],
+    knownLimitations: [
+      "Same as v0.8.3: in-flight training subprocess is reparented to launchd on Cmd+Q. Follow-up.",
+      "Module-level `_MAIN_PY = Path(__file__).resolve().parents[3] / \"src-pyloid\" / \"main.py\"` assumes training.py lives at `<repo>/server/vrl_yolo/engine/training.py` in dev. If the layout ever shifts, dev runs will raise a clear `RuntimeError(\"src-pyloid/main.py not found at ...\")` at training-start time. Frozen mode doesn't care — it uses the bundled binary directly.",
+    ],
+  },
+  {
     version: "0.8.3",
     phase: "P5.fix-3",
     title: "Flat ImageFolder support + Prepare splits for classify + layout examples",
     tag: "v0.8.3",
     commit: "72dc1db",
     date: "2026-05-18",
-    status: "current",
+    status: "shipped",
     features: [
       "**Flat ImageFolder layout is now recognised.** v0.8.0–v0.8.2 only detected the Ultralytics-ready split layout (`<root>/train/<class>/*.jpg`). The human-friendly flat layout (`<root>/<class>/*.jpg` — what doctors actually drop in when one folder per class is the natural way to organise lab images) was tagged \"Unknown layout\" and Continue was gated off. The inspector now accepts both shapes. Flat layouts are flagged with a clear warning saying training needs the splitter to run first.",
       "**Prepare splits now works for classification.** The same `POST /api/datasets/{id}/split` endpoint dispatches on detected task: detect routes to the existing YOLO splitter (image+label pairs, rewrites `data.yaml`); classify routes to the new `split_imagefolder` which stratifies per class and stages into `train/<class>/`, `val/<class>/`, and optionally `test/<class>/` — the exact shape Ultralytics' classify mode expects. Per-class stratification means a 10-image class doesn't accidentally land 9 in val and 1 in train.",

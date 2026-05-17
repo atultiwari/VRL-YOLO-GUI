@@ -558,6 +558,38 @@ def _wrapped_main() -> int:
         return 1
 
 
+def _maybe_dispatch_subprocess() -> None:
+    """Re-route subprocess invocations to the right entry point.
+
+    PyInstaller's bootloader ALWAYS runs the script that was bundled as
+    the entry point. `[sys.executable, "-m", "vrl_yolo.engine.train_runner"]`
+    works in dev (where `sys.executable` is a real Python) but in a
+    frozen `.app` bundle the bootloader ignores `-m module` and just
+    re-runs `main.py` — which boots a second Pyloid window and leaves
+    the parent's JobManager waiting forever for training events that
+    never arrive. v0.8.3 had exactly that bug.
+
+    Fix: JobManager sets `VRL_YOLO_GUI_SUBPROCESS=train_runner` in the
+    child env; we read it here at boot and dispatch to the runner's
+    `main()` directly, skipping the entire Pyloid / uvicorn boot.
+    Identical behaviour in dev and frozen — the subprocess only ever
+    runs training code, never Pyloid.
+
+    Must run AFTER `multiprocessing.freeze_support()`: if we're a
+    multiprocessing-spawn worker (Ultralytics DataLoader, torch dist,
+    etc.) `freeze_support()` handles dispatch internally and never
+    returns. Belt-and-braces: also bail out if multiprocessing protocol
+    args appear in argv, in case a future Python release changes when
+    `freeze_support()` actually intercepts them.
+    """
+    if any(a.startswith("--multiprocessing-fork") for a in sys.argv):
+        return
+    role = os.environ.get("VRL_YOLO_GUI_SUBPROCESS")
+    if role == "train_runner":
+        from vrl_yolo.engine.train_runner import main as runner_main
+        raise SystemExit(runner_main())
+
+
 if __name__ == "__main__":
     # CRITICAL: must be the first thing executed in a frozen PyInstaller
     # bundle. Ultralytics / torch DataLoader workers spawn via multiprocessing,
@@ -567,4 +599,5 @@ if __name__ == "__main__":
     # app (uvicorn, Pyloid window, the lot) before the single-instance lock
     # has a chance to refuse it.
     multiprocessing.freeze_support()
+    _maybe_dispatch_subprocess()
     raise SystemExit(_wrapped_main())

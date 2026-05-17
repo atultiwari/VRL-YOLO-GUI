@@ -38,6 +38,15 @@ from typing import Any, Literal
 from vrl_yolo.engine.hardware import detect_accelerator
 from vrl_yolo.engine.registry import ModelRegistry
 
+# Path to the desktop entry script. In dev mode JobManager passes this
+# explicitly to python so subprocess.Popen can invoke it with positional
+# args; in frozen mode the bundled binary auto-runs main.py and this
+# value isn't used.
+#
+# training.py lives at <repo>/server/vrl_yolo/engine/training.py, so
+# parents[3] is the repo root.
+_MAIN_PY = Path(__file__).resolve().parents[3] / "src-pyloid" / "main.py"
+
 JobStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 JobTask = Literal["detect", "classify"]
 
@@ -248,10 +257,39 @@ class JobManager:
             status="running",
         )
 
+        # CRITICAL: in a frozen PyInstaller .app, `sys.executable` is the
+        # bundle's main binary and the bootloader IGNORES `-m module` —
+        # it just re-runs the bundled entry script. v0.8.3 had that bug:
+        # `[sys.executable, "-m", "vrl_yolo.engine.train_runner", ...]`
+        # booted a second Pyloid window instead of the training runner,
+        # and the parent JobManager waited forever for events that
+        # never arrived.
+        #
+        # Instead, we invoke the SAME entry script (main.py) with the
+        # training args as positional argv, and set
+        # `VRL_YOLO_GUI_SUBPROCESS=train_runner` in the env (via
+        # `_child_env()`). The entry script's `_maybe_dispatch_subprocess()`
+        # reads that env var at boot and runs `train_runner.main()`
+        # directly, skipping the Pyloid / uvicorn boot entirely.
+        #
+        # Dev vs frozen cmd shape:
+        #   - Frozen: `[sys.executable, ...args]` — sys.executable IS
+        #     the bundled binary that auto-runs main.py.
+        #   - Dev: `[sys.executable, str(main_py_path), ...args]` —
+        #     sys.executable is python3.11 and needs an explicit script.
+        if getattr(sys, "frozen", False):
+            entry_args: list[str] = []
+        else:
+            if not _MAIN_PY.is_file():
+                raise RuntimeError(
+                    f"src-pyloid/main.py not found at {_MAIN_PY}; "
+                    "cannot spawn training subprocess in dev mode"
+                )
+            entry_args = [str(_MAIN_PY)]
+
         cmd = [
             sys.executable,
-            "-m",
-            "vrl_yolo.engine.train_runner",
+            *entry_args,
             "--dataset",
             str(dataset_root),
             "--model",
@@ -370,12 +408,19 @@ class JobManager:
 
 
 def _child_env() -> dict[str, str]:
-    """Subprocess env — force line-buffered stdout so events stream live."""
+    """Subprocess env — force line-buffered stdout so events stream live.
+
+    Also marks this child as a training-runner subprocess so the bundled
+    `.app` binary's entry script dispatches to `train_runner.main()`
+    instead of booting Pyloid. See `src-pyloid/main.py::_maybe_dispatch_subprocess`
+    for the receiving side.
+    """
     env = dict(os.environ)
     env["PYTHONUNBUFFERED"] = "1"
     # Suppress Ultralytics' first-run sentry telemetry prompt in CI / desktop
     # — it occasionally blocks waiting on stdin.
     env.setdefault("YOLO_OFFLINE", "true")
+    env["VRL_YOLO_GUI_SUBPROCESS"] = "train_runner"
     return env
 
 

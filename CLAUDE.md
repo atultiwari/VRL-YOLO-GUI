@@ -17,7 +17,7 @@ background. Success = doctor installs one binary, drops a folder of slide
 patches, gets annotated images (detect) or a prediction table + PDF (classify)
 in under 10 minutes.
 
-**Status (v0.8.3, 2026-05-18):**
+**Status (v0.8.4, 2026-05-18):**
 - ✅ Pre — `CLAUDE.md` entry guide (`9bd0b83`)
 - ✅ **P0** — Scaffolding · `v0.1-p0-scaffolding` (`d06e9e2`)
 - ✅ **P1** — Predict (Detection) · `v0.2-p1-predict-detect` (`2acd8f5`)
@@ -35,6 +35,7 @@ in under 10 minutes.
 - ⚠️ P5.fix-1 — macOS Cmd+Q event-filter shutdown · `v0.8.1` (`543b40d`) — installed an app-wide `QEvent::Quit` filter that crashed startup before `pyloid.run()`. Superseded.
 - ✅ P5.fix-2 — Window-scoped close filter · `v0.8.2` — scoped the filter to the Pyloid window's `QMainWindow` (catches `QEvent::Close`); both startup and close paths verified clean in dev with `VRL_YOLO_GUI_TEST_AUTO_QUIT_S=4 uv run python src-pyloid/main.py`.
 - ✅ P5.fix-3 — Flat ImageFolder + classify splitter + layout examples · `v0.8.3` — inspector now accepts `<root>/<class>/*.jpg` (was train/<class>/ only); `split_imagefolder` stratifies per class into train/val/test for Ultralytics' classify mode; `/train/dataset` shows a collapsible card with 4 ASCII layout examples. Verified end-to-end against `/Users/atultiwari/Downloads/Projects/Datasets/lung_colon_image_set/lung_partial`.
+- ✅ P5.fix-4 — Subprocess env-var dispatch · `v0.8.4` — frozen `.app` bootloader ignores `-m module`, so `[sys.executable, "-m", "vrl_yolo.engine.train_runner", ...]` was booting a second Pyloid window and leaving training stuck at epoch 0. Now `main.py::_maybe_dispatch_subprocess` reads `VRL_YOLO_GUI_SUBPROCESS=train_runner` after `freeze_support()` and dispatches to runner directly. Both detect and classify smoke-passed in dev via the same path the frozen binary uses.
 - ⏳ **P6 next** — Train on Colab: Cloudflare tunnel + Drive sync + companion notebooks for both tasks
 
 **P3b also shipped three user-requested extras:**
