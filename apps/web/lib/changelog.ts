@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P4b.fix-1",
     title: "Models — Download + rename + ml-import safety net",
     tag: null,
-    commit: "0000000",
+    commit: "2c0ced6",
     date: "2026-05-17",
     status: "current",
     features: [
