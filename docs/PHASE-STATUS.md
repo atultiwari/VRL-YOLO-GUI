@@ -10,8 +10,9 @@
 | Pre — CLAUDE.md entry guide | ✅ done | — | `9bd0b83` |
 | **P0 — Scaffolding** | ✅ done | `v0.1-p0-scaffolding` | `d06e9e2` |
 | **P1 — Predict (Detection)** | ✅ done | `v0.2-p1-predict-detect` | `2acd8f5` |
-| P2 — Predict (Classification) | ⏳ next | — | — |
-| P3a — Predict v1: batch + presets | ⏳ pending | — | — |
+| P1.fix-1 — Cold-start race fix | ✅ done | — | `427093d` |
+| **P2 — Predict (Classification)** | ✅ done | `v0.3-p2-predict-classify` | TBD |
+| P3a — Predict v1: batch + presets | ⏳ next | — | — |
 | P3b — Predict v1: reports + import | ⏳ pending | — | — |
 | P4a — Train (Detection) wizard | ⏳ pending | — | — |
 | P4b — Train (Detection) local run | ⏳ pending | — | — |
@@ -22,7 +23,7 @@
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at `2acd8f5` (P1 complete). **Next phase:** P2 — classification branch of `/api/inference/single` + task-switched `/predict` view.
+**Current head:** `main` at the P2 commit (`v0.3-p2-predict-classify`). **Next phase:** P3a — folder batch + histopathology / hematology workflow presets.
 
 ---
 
@@ -107,18 +108,64 @@ pnpm build (desktop)       → /predict 22.4 kB · /models 4.1 kB
 - No user-imported `.pt` flow yet — registry would pick it up if dropped into `~/Library/Application Support/VRL-YOLO-GUI/models/detect/`, but the UI import button still 501s (lands in P3).
 - First inference of a fresh process is ~3-4 s while torch JITs the MPS graph; subsequent calls drop to 50-100 ms.
 
+### ✅ P2 — Predict (Classification) · `v0.3-p2-predict-classify`
+
+**Phase deliverable:** /predict task-switches based on the selected
+model. Classification renders top-1 + top-5 with a review-threshold flag;
+detection still works exactly as before.
+
+**Sub-phases:**
+
+| # | Subject | Outcome |
+|---|---|---|
+| P2.1 | Fetch classify weights | `scripts/fetch-models.py --task classify` pulled yolo26n/s-cls + yolov8n/s-cls (~37 MB) |
+| P2.2 | Engine classify branch | `_run_classify` reads `result.probs.top5conf`; returns `ClassificationResult` dataclass |
+| P2.3 | Schemas + router Union | `/api/inference/single` returns `DetectionResponse | ClassificationResponse` (discriminated union in OpenAPI) |
+| P2.4 | Dynamic version | `vrl_yolo.__version__` reads `importlib.metadata.version("vrl-yolo-gui")`; bumped pyproject to 0.3.0 |
+| P2.5 | Frontend types + api | Added `ClassificationResponse` + `InferenceResponse` union; `inferSingle` returns the union |
+| P2.6 | /predict task-switch | View switches on `selectedTask`: classify hides IoU slider, shows top-1 banner + top-5 Recharts bar chart, surfaces "needs review" pill |
+| CL.1 | Changelog source | `apps/web/lib/changelog.ts` — typed `RELEASES[]` with version / phase / tag / commit / features / fixes / known limitations |
+| CL.2 | /changelog page + sidebar | Renders RELEASES; reads `/api/health` for the running version and highlights the matching card with "Running here" badge |
+| CL.3 | CHANGELOG.md | Keep-a-Changelog format at repo root mirrors the TS data |
+
+**Verification:**
+
+```
+step: start uvicorn on 127.0.0.1:52479
+step: wait for backend on 127.0.0.1:52479
+  backend ready in 114 ms
+
+GET  /api/health              → 200 {status:ok, version:0.3.0, ...}
+GET  /api/models              → 8 records (4 detect + 4 classify),
+                                  defaults={detect: yolo26n.pt, classify: yolo26n-cls.pt}
+POST /api/inference/single    → with yolo26n-cls.pt on bus.jpg:
+                                  task=classify, top1=minibus (0.52),
+                                  top5=[minibus, police_van, trolleybus, minivan, ambulance]
+POST /api/inference/single    → with yolo26n.pt (regression):
+                                  task=detect, 5 boxes, {bus:1, person:4}
+GET  /changelog/              → 200
+pnpm type-check               → clean
+pnpm build (desktop)          → /changelog 4.86 kB · /predict 126 kB (Recharts)
+```
+
+**Known limitations carried into P3:**
+- /predict still single-image. Folder batch is P3a.
+- Sliders rerun on click only (live-update is P3 polish).
+- User .pt import via UI still returns 501; `/api/models/import` (P3) will read `model.task` from the uploaded checkpoint and place it in `<storage_root>/models/<task>/`.
+- No CSV / XLSX / PDF reports yet — P3b ships the task-aware report templates.
+
 ---
 
-## Up next: P2 — Predict (Classification)
+## Up next: P3a — Predict v1 — batch + presets
 
-**Estimated 4 days** per PLAN.md §14. Scope:
+**Estimated 1 week** per PLAN.md §14. Scope:
 
-- Engine: add `_run_classify` branch returning `{task:"classify", top1, top5, probs}` instead of boxes.
-- Endpoint: same `/api/inference/single` — backend dispatches on `model.task`.
-- Frontend: task-switch `/predict` view. For classify, hide boxes; show top-1 + top-5 bar chart; "below threshold → needs review" flag.
-- Bundled weights: `scripts/fetch-models.py --task classify` pulls `yolo26{n,s}-cls.pt` + `yolov8{n,s}-cls.pt`.
+- `/api/inference/batch` — accept a folder path (desktop mode) or zipped upload (web mode), stream progress via WS.
+- Histopathology + hematology workflow presets per task (PLAN.md §10) — one-click run that wires conf / IoU / class subset together.
+- Predict UI: folder drop, results table per image, aggregate panel.
+- Recursive option for nested folder structures (Roboflow exports often nest by class).
 
-**Phase tag at completion:** `v0.3-p2-predict-classify`.
+**Phase tag at completion:** `v0.4-p3a-predict-batch`.
 
 ---
 

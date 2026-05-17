@@ -17,16 +17,27 @@ background. Success = doctor installs one binary, drops a folder of slide
 patches, gets annotated images (detect) or a prediction table + PDF (classify)
 in under 10 minutes.
 
-**Status (2026-05-17):**
+**Status (v0.3.0, 2026-05-17):**
 - ✅ Pre — `CLAUDE.md` entry guide (`9bd0b83`)
 - ✅ **P0** — Scaffolding · `v0.1-p0-scaffolding` (`d06e9e2`)
 - ✅ **P1** — Predict (Detection) · `v0.2-p1-predict-detect` (`2acd8f5`)
-- ⏳ **P2 next** — Predict (Classification)
+- ✅ P1.fix-1 — Cold-start race fix (`427093d`)
+- ✅ **P2** — Predict (Classification) · `v0.3-p2-predict-classify`
+- ⏳ **P3a next** — Predict v1: batch + workflow presets
 
 Live status snapshot is in [`docs/PHASE-STATUS.md`](docs/PHASE-STATUS.md);
-the canonical roadmap stays in [`PLAN.md`](PLAN.md). The user works
-phase-by-phase and expects a commit + push at each phase boundary; do
-**not** roll multiple phases into one commit.
+per-build feature list is in [`CHANGELOG.md`](CHANGELOG.md) (also surfaced
+in the app at `/changelog`); the canonical roadmap stays in
+[`PLAN.md`](PLAN.md). The user works phase-by-phase and expects a commit
++ push at each phase boundary; do **not** roll multiple phases into one
+commit.
+
+**On every phase commit, also:**
+1. Bump `pyproject.toml` `version` so `/api/health` advertises it.
+2. Prepend an entry to `apps/web/lib/changelog.ts` with `status: "current"`;
+   flip the previous current entry to `"shipped"`.
+3. Mirror the entry into `CHANGELOG.md`.
+4. Update the snapshot table in `docs/PHASE-STATUS.md`.
 
 ---
 

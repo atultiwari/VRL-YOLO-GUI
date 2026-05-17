@@ -1,14 +1,16 @@
 # VRL YOLO GUI
 
-> **Status:** Phase 1 — Predict (Detection) complete (2026-05-17).
-> Single-image detection works end-to-end with bundled YOLO26 / YOLOv8
-> weights; `/predict` renders boxes + counts, `/models` lists the
-> library. Classification (P2), batch + reports (P3), and Train modes
-> (P4–P6) are next.
+> **Status (v0.3.0, 2026-05-17):** Phases P0–P2 complete. Single-image
+> **detection** and **classification** both work end-to-end with the
+> eight bundled YOLO26 / YOLOv8 weights; `/predict` task-switches the
+> view automatically, `/models` lists the library, and the in-app
+> `/changelog` view shows which features are functional in which build.
+> Batch + reports (P3) and Train modes (P4–P6) are next.
 >
-> See [`docs/PHASE-STATUS.md`](docs/PHASE-STATUS.md) for the per-phase
-> tracker, [`PLAN.md`](PLAN.md) for the full roadmap, and
-> [`CLAUDE.md`](CLAUDE.md) for the session entry guide.
+> See [`CHANGELOG.md`](CHANGELOG.md) for the per-release feature list,
+> [`docs/PHASE-STATUS.md`](docs/PHASE-STATUS.md) for the phase tracker,
+> [`PLAN.md`](PLAN.md) for the full roadmap, and [`CLAUDE.md`](CLAUDE.md)
+> for the session entry guide.
 
 A clinician-facing desktop toolkit demonstrating two YOLO tasks in
 **histopathology** and **hematology**:

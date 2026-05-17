@@ -1,8 +1,18 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Cpu, Gauge, Play, Sparkles, Timer, X } from "lucide-react";
+import { AlertTriangle, Brain, Cpu, Gauge, Microscope, Play, Sparkles, Timer, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,9 +29,15 @@ import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
 import { fetchModels, inferSingle } from "@/lib/api";
 import { cn, formatBytes } from "@/lib/utils";
-import type { DetectionBox, DetectionResponse, ModelInfo } from "@/lib/types";
+import type {
+  ClassificationResponse,
+  DetectionBox,
+  DetectionResponse,
+  InferenceResponse,
+  Task,
+} from "@/lib/types";
 
-// Stable palette per class index — keeps box colour consistent across runs
+// Stable palette per class index — keeps colour consistent across runs
 // and across confidence-slider re-renders, which matters when a doctor is
 // eyeballing whether the same nucleus moved between two thresholds.
 const PALETTE = [
@@ -93,10 +109,23 @@ function BoxOverlay({
   );
 }
 
-function ResultsPanel({ result }: { result: DetectionResponse }) {
-  const counts = Object.entries(result.counts_per_class).sort(
-    (a, b) => b[1] - a[1],
+function ResultBadges({ result }: { result: InferenceResponse }) {
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Badge tone="clinical">
+        <Cpu className="mr-1 size-3" />
+        {result.accelerator.kind.toUpperCase()}
+      </Badge>
+      <Badge tone="subtle">
+        <Timer className="mr-1 size-3" />
+        {result.inference_ms.toFixed(0)} ms
+      </Badge>
+    </div>
   );
+}
+
+function DetectionPanel({ result }: { result: DetectionResponse }) {
+  const counts = Object.entries(result.counts_per_class).sort((a, b) => b[1] - a[1]);
   return (
     <Card>
       <CardHeader>
@@ -112,16 +141,7 @@ function ResultsPanel({ result }: { result: DetectionResponse }) {
                 : `${result.boxes.length} detection${result.boxes.length === 1 ? "" : "s"} across ${counts.length} class${counts.length === 1 ? "" : "es"}.`}
             </CardDescription>
           </div>
-          <div className="flex flex-col items-end gap-1">
-            <Badge tone="clinical">
-              <Cpu className="mr-1 size-3" />
-              {result.accelerator.kind.toUpperCase()}
-            </Badge>
-            <Badge tone="subtle">
-              <Timer className="mr-1 size-3" />
-              {result.inference_ms.toFixed(0)} ms
-            </Badge>
-          </div>
+          <ResultBadges result={result} />
         </div>
       </CardHeader>
       <CardContent>
@@ -143,14 +163,11 @@ function ResultsPanel({ result }: { result: DetectionResponse }) {
                 );
                 const colour =
                   PALETTE[
-                    (result.boxes.find((b) => b.class_name === className)
-                      ?.class_id ?? 0) % PALETTE.length
+                    (result.boxes.find((b) => b.class_name === className)?.class_id ?? 0) %
+                      PALETTE.length
                   ];
                 return (
-                  <tr
-                    key={className}
-                    className="border-t border-surface-muted text-ink"
-                  >
+                  <tr key={className} className="border-t border-surface-muted text-ink">
                     <td className="py-2.5">
                       <span className="flex items-center gap-2">
                         <span
@@ -161,9 +178,7 @@ function ResultsPanel({ result }: { result: DetectionResponse }) {
                         {className}
                       </span>
                     </td>
-                    <td className="py-2.5 text-right font-medium tabular-nums">
-                      {count}
-                    </td>
+                    <td className="py-2.5 text-right font-medium tabular-nums">{count}</td>
                     <td className="py-2.5 text-right tabular-nums text-ink-muted">
                       {(maxConf * 100).toFixed(1)}%
                     </td>
@@ -178,32 +193,139 @@ function ResultsPanel({ result }: { result: DetectionResponse }) {
   );
 }
 
+function ClassificationPanel({
+  result,
+  reviewThreshold,
+}: {
+  result: ClassificationResponse;
+  reviewThreshold: number;
+}) {
+  const needsReview = result.top1.conf < reviewThreshold;
+  const chartData = result.top5.map((p) => ({
+    name: p.class_name,
+    value: p.conf,
+    fill: colourFor(p.class_id),
+  }));
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="size-4 text-accent" />
+                Classification result
+              </CardTitle>
+              <CardDescription>
+                Top-1 prediction over the model&apos;s {result.top5.length}-class output.
+              </CardDescription>
+            </div>
+            <ResultBadges result={result} />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-baseline gap-3">
+            <span
+              className="size-4 rounded-full"
+              style={{ background: colourFor(result.top1.class_id) }}
+              aria-hidden="true"
+            />
+            <h3 className="text-3xl font-semibold tracking-tight">
+              {result.top1.class_name}
+            </h3>
+            <span className="text-2xl font-medium tabular-nums text-ink-muted">
+              {(result.top1.conf * 100).toFixed(1)}%
+            </span>
+          </div>
+          {needsReview ? (
+            <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <AlertTriangle className="size-4" />
+              Top-1 confidence is below the review threshold
+              ({(reviewThreshold * 100).toFixed(0)}%) — flag for manual review.
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Top-5 alternatives</CardTitle>
+          <CardDescription>
+            Class probabilities from the softmax head. Sorted high → low.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="h-[260px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={chartData}
+                layout="vertical"
+                margin={{ top: 8, right: 32, left: 0, bottom: 8 }}
+              >
+                <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke="oklch(92% 0 0)" />
+                <XAxis
+                  type="number"
+                  domain={[0, 1]}
+                  tickFormatter={(v) => `${Math.round(v * 100)}%`}
+                  tick={{ fontSize: 12, fill: "oklch(48% 0 0)" }}
+                  stroke="oklch(92% 0 0)"
+                />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  width={140}
+                  tick={{ fontSize: 12, fill: "oklch(18% 0 0)" }}
+                  stroke="oklch(92% 0 0)"
+                />
+                <Tooltip
+                  cursor={{ fill: "oklch(94% 0.04 250 / 0.5)" }}
+                  formatter={(v: number) => `${(v * 100).toFixed(2)}%`}
+                  labelFormatter={(name: string) => name}
+                />
+                <Bar dataKey="value" radius={[0, 6, 6, 0]}>
+                  {chartData.map((d, i) => (
+                    <Cell key={i} fill={d.fill} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function PredictPage() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
   const [conf, setConf] = useState(0.25);
   const [iou, setIou] = useState(0.45);
-  const [result, setResult] = useState<DetectionResponse | null>(null);
+  const [result, setResult] = useState<InferenceResponse | null>(null);
 
   const { data, isLoading: modelsLoading } = useQuery({
     queryKey: ["models"],
     queryFn: fetchModels,
   });
 
-  const detectModels = useMemo<ModelInfo[]>(
-    () => data?.models.filter((m) => m.task === "detect") ?? [],
-    [data],
+  const allModels = data?.models ?? [];
+
+  // Derive task from the currently selected model so the UI can switch
+  // between detection-shaped and classification-shaped views.
+  const selectedTask: Task | undefined = useMemo(
+    () => allModels.find((m) => m.name === selectedModel)?.task,
+    [allModels, selectedModel],
   );
 
-  // Default-model selection: prefer the user's saved default; fall back to
-  // the first detect model in the registry so a fresh install still works.
+  // Default-model selection: prefer the user's saved detect default; fall
+  // back to the first model in the registry (either task).
   useEffect(() => {
-    if (selectedModel || detectModels.length === 0) return;
-    const def = data?.defaults.detect;
-    const fallback = detectModels[0]?.name;
-    setSelectedModel(def ?? fallback);
-  }, [data, detectModels, selectedModel]);
+    if (selectedModel || allModels.length === 0) return;
+    const def = data?.defaults.detect ?? data?.defaults.classify;
+    setSelectedModel(def ?? allModels[0]?.name);
+  }, [data, allModels, selectedModel]);
 
   useEffect(() => {
     if (!file) {
@@ -235,27 +357,35 @@ export default function PredictPage() {
     run.reset();
   };
 
-  const modelOptions = detectModels.map((m) => ({
-    value: m.name,
-    label: `${m.name}  ·  ${m.num_classes} cls  ·  ${formatBytes(m.size_mb)}`,
-  }));
+  const modelOptions = allModels.map((m) => {
+    const taskTag = m.task === "detect" ? "detect" : "classify";
+    return {
+      value: m.name,
+      label: `${m.name}  ·  ${taskTag}  ·  ${m.num_classes} cls  ·  ${formatBytes(m.size_mb)}`,
+    };
+  });
 
   const canRun = !!file && !!selectedModel && !run.isPending;
-  const imageSize = result?.image_size;
+  const isClassify = selectedTask === "classify";
+
+  // Result-derived metadata. For classify the SVG overlay is skipped
+  // entirely; the image renders as-is and the panel shows top-1 / top-5.
+  const resultImageSize = result?.image_size;
+  const showOverlay = result?.task === "detect";
 
   return (
     <section className="flex h-full flex-col gap-8 px-12 py-12">
       <header>
         <p className="text-sm font-medium uppercase tracking-[0.2em] text-ink-muted">
-          Predict · Detection
+          Predict · Detection &amp; Classification
         </p>
         <h1 className="mt-2 text-4xl font-semibold tracking-tight">
-          Run a detection model on a slide patch.
+          Run a model on a slide patch.
         </h1>
         <p className="mt-3 max-w-2xl text-ink-muted">
-          Drop a single image, pick a YOLO detection model, and tune confidence
-          / IoU. Classification arrives in P2; folder batch and clinical reports
-          in P3.
+          Drop a single image, pick a YOLO model. The view auto-switches between
+          object detection (boxes + counts) and image classification (top-1 +
+          top-5). Folder batch and clinical reports arrive with P3.
         </p>
       </header>
 
@@ -263,9 +393,20 @@ export default function PredictPage() {
         <aside className="flex flex-col gap-4">
           <Card>
             <CardHeader>
-              <CardTitle>Model</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                {isClassify ? (
+                  <Brain className="size-4 text-accent" />
+                ) : (
+                  <Microscope className="size-4 text-accent" />
+                )}
+                Model
+              </CardTitle>
               <CardDescription>
-                Detection models only in P1. Classification picker arrives with P2.
+                {isClassify
+                  ? "Classification — full top-5 returned. Slider sets the review threshold."
+                  : selectedTask === "detect"
+                  ? "Detection — boxes filtered by confidence; IoU drives NMS."
+                  : "Pick a detection or classification model to begin."}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -275,32 +416,34 @@ export default function PredictPage() {
                 options={modelOptions}
                 onChange={setSelectedModel}
                 placeholder={modelsLoading ? "Loading…" : "Pick a model"}
-                emptyText="No detection models — run scripts/fetch-models.py"
+                emptyText="No models — run scripts/fetch-models.py"
               />
               <Slider
-                label="Confidence"
+                label={isClassify ? "Review threshold" : "Confidence"}
                 value={conf}
                 min={0.05}
                 max={0.95}
                 step={0.01}
                 onChange={setConf}
-                hint="Boxes below this score are hidden from results."
+                hint={
+                  isClassify
+                    ? "Top-1 predictions below this score are flagged for manual review."
+                    : "Boxes below this score are hidden from results."
+                }
               />
-              <Slider
-                label="IoU"
-                value={iou}
-                min={0.1}
-                max={0.95}
-                step={0.01}
-                onChange={setIou}
-                hint="Non-maximum-suppression threshold for overlapping boxes."
-              />
+              {isClassify ? null : (
+                <Slider
+                  label="IoU"
+                  value={iou}
+                  min={0.1}
+                  max={0.95}
+                  step={0.01}
+                  onChange={setIou}
+                  hint="Non-maximum-suppression threshold for overlapping boxes."
+                />
+              )}
               <div className="flex gap-2 pt-2">
-                <Button
-                  className="flex-1"
-                  disabled={!canRun}
-                  onClick={() => run.mutate()}
-                >
+                <Button className="flex-1" disabled={!canRun} onClick={() => run.mutate()}>
                   {run.isPending ? (
                     <>
                       <Spinner /> Running…
@@ -324,7 +467,7 @@ export default function PredictPage() {
               ) : null}
               <div className="flex items-center gap-2 border-t border-surface-muted pt-3 text-xs text-ink-muted">
                 <Gauge className="size-3.5" />
-                Sliders re-run on next click — no live-update yet (P3 work).
+                Sliders re-run on next click — live update lands in P3.
               </div>
             </CardContent>
           </Card>
@@ -342,7 +485,7 @@ export default function PredictPage() {
                     <CardDescription>
                       {result
                         ? `${result.image_size[0]} × ${result.image_size[1]} px · model ${result.model}`
-                        : "Click ‘Run inference’ to detect objects."}
+                        : "Click ‘Run inference’ when ready."}
                     </CardDescription>
                   </div>
                   <Button variant="ghost" size="sm" onClick={onClear}>
@@ -358,11 +501,11 @@ export default function PredictPage() {
                     alt={file?.name ?? "Selected patch"}
                     className="block max-h-[70vh] max-w-full object-contain"
                   />
-                  {result && imageSize ? (
+                  {showOverlay && result && resultImageSize ? (
                     <BoxOverlay
-                      boxes={result.boxes}
-                      imageW={imageSize[0]}
-                      imageH={imageSize[1]}
+                      boxes={(result as DetectionResponse).boxes}
+                      imageW={resultImageSize[0]}
+                      imageH={resultImageSize[1]}
                     />
                   ) : null}
                 </div>
@@ -370,12 +513,20 @@ export default function PredictPage() {
             </Card>
           )}
 
-          {result ? <ResultsPanel result={result} /> : null}
+          {result?.task === "detect" ? <DetectionPanel result={result} /> : null}
+          {result?.task === "classify" ? (
+            <ClassificationPanel result={result} reviewThreshold={conf} />
+          ) : null}
           {!result && previewUrl ? (
             <Card>
               <CardContent className={cn("py-10 text-center text-sm text-ink-muted")}>
-                Ready when you are — click <span className="font-medium text-ink">Run inference</span> to send the image to{" "}
-                <code className="rounded bg-surface-muted px-1.5 py-0.5 text-xs">/api/inference/single</code>.
+                Ready when you are — click{" "}
+                <span className="font-medium text-ink">Run inference</span> to send the image
+                to{" "}
+                <code className="rounded bg-surface-muted px-1.5 py-0.5 text-xs">
+                  /api/inference/single
+                </code>
+                .
               </CardContent>
             </Card>
           ) : null}

@@ -1,0 +1,122 @@
+/**
+ * In-app changelog source of truth.
+ *
+ * Each entry maps a shipped version to a phase, git tag, commit short SHA,
+ * and the features / fixes that became functional in that build. The
+ * /changelog page renders these; CHANGELOG.md at the repo root mirrors
+ * the same data for GitHub viewers.
+ *
+ * Update protocol (on every phase commit):
+ *   1. Bump `pyproject.toml` `version` so `/api/health` reports the new value.
+ *   2. Add a new entry at the TOP of `RELEASES` with status: "current".
+ *   3. Flip the previously-current entry to status: "shipped".
+ *   4. Mirror the entry into CHANGELOG.md.
+ *   5. Tag the commit (e.g. v0.3-p2-predict-classify) and push.
+ */
+
+export type ReleaseStatus = "current" | "shipped";
+
+export interface ReleaseEntry {
+  /** Semver string that matches pyproject.toml at this commit. */
+  version: string;
+  /** PLAN.md phase identifier — "P0", "P1", "P1.fix-1", "P2", … */
+  phase: string;
+  /** Short human title for the phase. */
+  title: string;
+  /** Annotated git tag, or null for between-phase fix commits. */
+  tag: string | null;
+  /** Short commit SHA (7 chars) the entry was cut from. */
+  commit: string;
+  /** ISO date — usually the day of the commit. */
+  date: string;
+  /** Latest shipped release flips to "current" until the next entry lands. */
+  status: ReleaseStatus;
+  /** What's functional in the binary as of this version. */
+  features: string[];
+  /** Bugs squashed in this version. */
+  fixes: string[];
+  /** Carried-forward gaps that the next phase will close. */
+  knownLimitations?: string[];
+}
+
+export const RELEASES: ReleaseEntry[] = [
+  {
+    version: "0.3.0",
+    phase: "P2",
+    title: "Predict — Classification",
+    tag: "v0.3-p2-predict-classify",
+    commit: "TBD",
+    date: "2026-05-17",
+    status: "current",
+    features: [
+      "Single-image classification via Ultralytics' classify head — top-1 + top-5 returned for the full softmax distribution.",
+      "/predict view task-switches based on the selected model: no SVG overlay, top-1 banner, top-5 bar chart (Recharts).",
+      "Confidence slider repurposes as a review threshold — top-1 below the threshold renders a 'needs review' badge.",
+      "Four new bundled classification weights: yolo26n-cls.pt, yolo26s-cls.pt, yolov8n-cls.pt, yolov8s-cls.pt (~37 MB).",
+      "/api/inference/single now returns a discriminated union (detect | classify); FastAPI documents both shapes in OpenAPI.",
+      "In-app /changelog page lists per-build features, fixes, and known limitations.",
+    ],
+    fixes: [],
+    knownLimitations: [
+      "Sliders don't live-update inference — still click-to-rerun (live updates planned for P3).",
+      "User .pt import via the UI still returns 501 (lands in P3).",
+      "Folder batch + CSV/XLSX/PDF reports not yet implemented (P3).",
+    ],
+  },
+  {
+    version: "0.2.1",
+    phase: "P1.fix-1",
+    title: "Cold-start race fix",
+    tag: null,
+    commit: "427093d",
+    date: "2026-05-17",
+    status: "shipped",
+    features: [],
+    fixes: [
+      "Pyloid window no longer races uvicorn's lifespan startup — `window.load_url` waits for `Server.started`; backend ready in ~55 ms instead of ~12 s.",
+      "Registry scan + torch import deferred out of FastAPI lifespan; first /api/models call does a lazy scan (~1.7 s) and caches.",
+    ],
+  },
+  {
+    version: "0.2.0",
+    phase: "P1",
+    title: "Predict — Detection",
+    tag: "v0.2-p1-predict-detect",
+    commit: "2acd8f5",
+    date: "2026-05-17",
+    status: "shipped",
+    features: [
+      "Single-image detection via Ultralytics YOLO — boxes (xyxy + xywhn), per-class counts, accelerator + inference timing in the response.",
+      "Apple Silicon MPS auto-detected; first inference cold-loads ~3.6 s, subsequent calls ~50–100 ms.",
+      "/predict view: drop zone, model picker, confidence + IoU sliders, SVG box overlay with stable per-class colours, counts table.",
+      "/models page lists bundled + user models grouped by task with a 'Set as default' mutation that persists to disk.",
+      "Four bundled detection weights: yolo26n.pt, yolo26s.pt, yolov8n.pt, yolov8s.pt (~53 MB).",
+      "Model registry persists per-task defaults to <storage_root>/models/defaults.json.",
+      "Python pinned to 3.11 via `.python-version`; dev + CI converge.",
+    ],
+    fixes: [],
+  },
+  {
+    version: "0.1.0",
+    phase: "P0",
+    title: "Scaffolding",
+    tag: "v0.1-p0-scaffolding",
+    commit: "d06e9e2",
+    date: "2026-05-17",
+    status: "shipped",
+    features: [
+      "Pyloid desktop window opens, embedded uvicorn serves /api/health (200).",
+      "Repo layout finalised: server/vrl_yolo/ (flat module), apps/web/ (Next.js 15 + Tailwind v4), src-pyloid/, scripts/, packaging/, models/.",
+      "Six router stubs return 501 with the phase they land in — discoverable from /openapi.json.",
+      "AGPL-3.0 LICENSE + COMMERCIAL-LICENSE.md template + NOTICE for upstream component licenses.",
+      "GitHub Actions release workflow: macos-14 (arm64) + windows-latest (x64) matrix.",
+      "macOS-specific packaging recipe in scripts/build-release.py: devtool-bundle strip, Team-ID inside-out resign, Info.plist version stamp, .dmg wrap, aboutToQuit → os._exit shutdown workaround.",
+    ],
+    fixes: [],
+  },
+];
+
+/** Convenience accessor — UI uses this for the "you're on" indicator. */
+export function currentRelease(): ReleaseEntry {
+  return RELEASES.find((r) => r.status === "current") ?? RELEASES[0];
+}

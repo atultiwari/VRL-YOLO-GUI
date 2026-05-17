@@ -39,3 +39,29 @@ export interface DetectionResponse {
   boxes: DetectionBox[];
   counts_per_class: Record<string, number>;
 }
+
+export interface ClassificationPrediction {
+  class_id: number;
+  class_name: string;
+  conf: number;
+}
+
+export interface ClassificationResponse {
+  task: "classify";
+  model: string;
+  image_size: [number, number];
+  accelerator: Accelerator;
+  inference_ms: number;
+  top1: ClassificationPrediction;
+  top5: ClassificationPrediction[];
+}
+
+// Discriminated union — narrow via `if (result.task === "detect")`.
+export type InferenceResponse = DetectionResponse | ClassificationResponse;
+
+export interface HealthResponse {
+  status: string;
+  version: string;
+  python: string;
+  platform: string;
+}

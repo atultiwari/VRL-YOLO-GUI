@@ -1,11 +1,14 @@
 """Inference engine — thin wrapper around `ultralytics.YOLO.predict`.
 
-P1 ships detection only. Classification (which doesn't have boxes and
-needs a different result shape) lands in P2 — see the `_run_detect`
-implementation below for the eventual `_run_classify` neighbour.
+Two task families share one entry point (`infer_single`) and dispatch
+internally on `record.task`:
 
-Result schema is what the frontend consumes — Ultralytics' `Results`
-objects don't serialize well over JSON, so we map them to plain dicts.
+- **Detect** → `DetectionResult` (boxes + counts).
+- **Classify** → `ClassificationResult` (top-1 + top-5).
+
+Ultralytics' `Results` objects don't serialize cleanly over JSON, so we
+map them to plain dataclasses + `to_json()` helpers shaped for the
+frontend.
 """
 
 from __future__ import annotations
@@ -13,16 +16,18 @@ from __future__ import annotations
 import io
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Literal, TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING, Union
 
 from PIL import Image
 
 from vrl_yolo.engine.hardware import Accelerator, detect_accelerator
-from vrl_yolo.engine.registry import ModelRegistry, Task
+from vrl_yolo.engine.registry import ModelRegistry
 
 if TYPE_CHECKING:
     from ultralytics import YOLO
+
+
+# --- Detection ---------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -65,6 +70,51 @@ class DetectionResult:
         }
 
 
+# --- Classification ----------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ClassificationPrediction:
+    class_id: int
+    class_name: str
+    conf: float  # 0..1, softmax probability over the model's class list
+
+    def to_json(self) -> dict:
+        return {
+            "class_id": self.class_id,
+            "class_name": self.class_name,
+            "conf": round(self.conf, 4),
+        }
+
+
+@dataclass(frozen=True)
+class ClassificationResult:
+    task: Literal["classify"]
+    model: str
+    image_size: tuple[int, int]
+    accelerator: Accelerator
+    inference_ms: float
+    top1: ClassificationPrediction
+    top5: list[ClassificationPrediction]
+
+    def to_json(self) -> dict:
+        return {
+            "task": self.task,
+            "model": self.model,
+            "image_size": list(self.image_size),
+            "accelerator": {"kind": self.accelerator.kind, "name": self.accelerator.name},
+            "inference_ms": round(self.inference_ms, 2),
+            "top1": self.top1.to_json(),
+            "top5": [p.to_json() for p in self.top5],
+        }
+
+
+InferenceResult = Union[DetectionResult, ClassificationResult]
+
+
+# --- Engine ------------------------------------------------------------
+
+
 class InferenceError(Exception):
     """Surfaced to the API layer as 4xx when the cause is user input."""
 
@@ -96,7 +146,16 @@ class InferenceEngine:
         model_name: str,
         conf: float = 0.25,
         iou: float = 0.45,
-    ) -> DetectionResult:
+    ) -> InferenceResult:
+        """Run a single image through whichever task the model declares.
+
+        For detect: `conf` and `iou` are passed through to NMS, so the
+        boxes returned are already filtered.
+        For classify: the server always returns the full top-5; the
+        `conf` value is a *review threshold* the frontend applies
+        client-side ("flag predictions below X for review"). We accept
+        it here for symmetry but don't use it during inference.
+        """
         if not (0.0 < conf <= 1.0):
             raise InferenceError(f"conf must be in (0, 1]; got {conf!r}")
         if not (0.0 < iou <= 1.0):
@@ -107,14 +166,6 @@ class InferenceEngine:
         except KeyError as exc:
             raise InferenceError(f"model {model_name!r} not in registry") from exc
 
-        if record.task != "detect":
-            # Classification reuses this surface in P2 via a sibling method;
-            # routing the request here is a frontend bug worth flagging hard.
-            raise InferenceError(
-                f"{model_name!r} is a {record.task!r} model; "
-                "POST /api/inference/single (classify) once P2 lands"
-            )
-
         try:
             image = Image.open(io.BytesIO(image_bytes))
             image.load()
@@ -122,7 +173,15 @@ class InferenceEngine:
             raise InferenceError(f"could not decode image: {exc}") from exc
 
         yolo = self._registry.load(model_name)
-        return self._run_detect(yolo, image, model_name=model_name, conf=conf, iou=iou)
+        if record.task == "detect":
+            return self._run_detect(yolo, image, model_name=model_name, conf=conf, iou=iou)
+        if record.task == "classify":
+            return self._run_classify(yolo, image, model_name=model_name)
+        # Registry only admits detect+classify (see _SUPPORTED_TASKS); a
+        # mismatch here means somebody bypassed the registry.
+        raise InferenceError(f"unsupported task: {record.task!r}")
+
+    # ---- detect ------------------------------------------------------
 
     def _run_detect(
         self,
@@ -192,4 +251,68 @@ class InferenceEngine:
             inference_ms=inference_ms,
             boxes=boxes_out,
             counts_per_class=counts,
+        )
+
+    # ---- classify ----------------------------------------------------
+
+    def _run_classify(
+        self,
+        yolo: "YOLO",
+        image: Image.Image,
+        *,
+        model_name: str,
+    ) -> ClassificationResult:
+        """Top-1 / top-5 over the model's class list.
+
+        Ultralytics' classify head produces a `Probs` object on
+        `results[0].probs`. Always returns the top-5 — review threshold
+        is a client concern (PLAN.md §10).
+        """
+        start = time.perf_counter()
+        accelerator = self.accelerator
+        results = yolo.predict(
+            source=image,
+            device=accelerator.kind if accelerator.kind != "cpu" else None,
+            verbose=False,
+        )
+        inference_ms = (time.perf_counter() - start) * 1000.0
+
+        if not results:
+            raise InferenceError("classify inference returned no Results object")
+
+        result = results[0]
+        probs = getattr(result, "probs", None)
+        if probs is None:
+            raise InferenceError(
+                f"{model_name!r} returned no probs — checkpoint mis-tagged as classify?"
+            )
+
+        names = dict(getattr(result, "names", {}) or {})
+
+        # Ultralytics' Probs API:
+        #   .top1        -> int (class index)
+        #   .top1conf    -> tensor scalar
+        #   .top5        -> list[int] (indices, sorted high→low)
+        #   .top5conf    -> tensor of length 5
+        top5_ids = list(probs.top5)
+        top5_confs = probs.top5conf.cpu().numpy().tolist()
+        top5 = [
+            ClassificationPrediction(
+                class_id=int(cid),
+                class_name=names.get(int(cid), f"class_{int(cid)}"),
+                conf=float(c),
+            )
+            for cid, c in zip(top5_ids, top5_confs)
+        ]
+        # top1 is always top5[0] — Ultralytics guarantees descending order.
+        top1 = top5[0] if top5 else ClassificationPrediction(0, "unknown", 0.0)
+
+        return ClassificationResult(
+            task="classify",
+            model=model_name,
+            image_size=image.size,
+            accelerator=accelerator,
+            inference_ms=inference_ms,
+            top1=top1,
+            top5=top5,
         )

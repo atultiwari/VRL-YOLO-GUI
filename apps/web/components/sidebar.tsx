@@ -1,5 +1,8 @@
 import Link from "next/link";
-import { Activity, Layers, Microscope, Brain } from "lucide-react";
+import { Activity, Brain, Layers, Microscope, Sparkles } from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import { currentRelease } from "@/lib/changelog";
 
 type NavItem = {
   href: string;
@@ -35,9 +38,20 @@ const NAV: NavItem[] = [
   },
 ];
 
+const RELEASE_NOTES: NavItem = {
+  href: "/changelog",
+  label: "Changelog",
+  description: "What works in which build",
+  icon: Sparkles,
+};
+
 export function Sidebar() {
+  const current = currentRelease();
   return (
-    <nav aria-label="Main navigation" className="flex h-full flex-col gap-1 p-4">
+    <nav
+      aria-label="Main navigation"
+      className="flex h-full flex-col gap-1 p-4"
+    >
       <p className="px-3 pb-3 text-xs font-semibold uppercase tracking-[0.18em] text-ink-muted">
         Workspace
       </p>
@@ -54,6 +68,25 @@ export function Sidebar() {
           </span>
         </Link>
       ))}
+
+      <p className="mt-6 px-3 pb-2 text-xs font-semibold uppercase tracking-[0.18em] text-ink-muted">
+        About
+      </p>
+      <Link
+        href={RELEASE_NOTES.href}
+        className="group flex items-start justify-between gap-3 rounded-md px-3 py-2 text-sm transition hover:bg-accent-subtle"
+      >
+        <span className="flex items-start gap-3">
+          <RELEASE_NOTES.icon className="mt-0.5 size-4 text-ink-muted group-hover:text-accent" />
+          <span className="flex flex-col">
+            <span className="font-medium text-ink">{RELEASE_NOTES.label}</span>
+            <span className="text-xs text-ink-muted">{RELEASE_NOTES.description}</span>
+          </span>
+        </span>
+        <Badge tone="accent" className="shrink-0">
+          v{current.version}
+        </Badge>
+      </Link>
     </nav>
   );
 }

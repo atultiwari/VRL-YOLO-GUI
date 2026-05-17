@@ -1,5 +1,6 @@
 import type {
-  DetectionResponse,
+  HealthResponse,
+  InferenceResponse,
   ModelInfo,
   ModelsListResponse,
   Task,
@@ -33,12 +34,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function fetchHealth(): Promise<{
-  status: string;
-  version: string;
-  python: string;
-  platform: string;
-}> {
+export async function fetchHealth(): Promise<HealthResponse> {
   return fetchJson(`${API_BASE}/health`);
 }
 
@@ -70,7 +66,7 @@ export async function inferSingle({
   model,
   conf,
   iou,
-}: InferSingleArgs): Promise<DetectionResponse> {
+}: InferSingleArgs): Promise<InferenceResponse> {
   const form = new FormData();
   form.append("image", image);
   form.append("model", model);
