@@ -8,11 +8,13 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from vrl_yolo.api.schemas import (
     DatasetInfoOut,
     DatasetSplitOut,
+    RenameClassesRequest,
     SplitDatasetRequest,
 )
 from vrl_yolo.config import Settings
 from vrl_yolo.engine.dataset import (
     inspect_dataset,
+    rename_classes,
     split_dataset,
     write_uploaded_dataset,
 )
@@ -151,6 +153,48 @@ def split_dataset_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
+    return _to_out(info)
+
+
+@router.patch("/{dataset_id}/classes", response_model=DatasetInfoOut)
+def rename_dataset_classes(
+    dataset_id: str,
+    body: RenameClassesRequest,
+    settings: Settings = Depends(_settings),
+) -> DatasetInfoOut:
+    """Rewrite `names:` on data.yaml in place.
+
+    Length must match the dataset's current class count — adding /
+    removing classes would require re-labelling, which is out of scope
+    for v1. Empty / whitespace-only / duplicate names are rejected so
+    the user can't accidentally collapse two classes into one.
+    """
+    root = _resolve_dataset_root(dataset_id, settings)
+    current = inspect_dataset(root)
+    expected = len(current.classes)
+    incoming = [n.strip() for n in body.names]
+
+    if expected > 0 and len(incoming) != expected:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"expected {expected} class names, got {len(incoming)} — "
+                "adding/removing classes requires re-labelling, not supported in v1"
+            ),
+        )
+    for i, name in enumerate(incoming):
+        if not name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"class {i} has an empty name",
+            )
+    if len(set(incoming)) != len(incoming):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="class names must be unique",
+        )
+
+    info = rename_classes(root, incoming)
     return _to_out(info)
 
 

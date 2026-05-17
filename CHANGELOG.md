@@ -12,6 +12,31 @@ for the running tracker.
 
 ---
 
+## [0.7.0] — 2026-05-17 · P4b: Train — Detection local run
+
+**Tag:** `v0.7-p4b-train-detect-run`
+
+### Added
+- **Local training actually runs.** Press **Start training** on `/train/configure` and the backend spawns an Ultralytics subprocess against your dataset. Per-epoch metrics stream live to `/train/run` via WebSocket with two Recharts curves (box/cls/dfl loss + mAP50 / mAP50-95), a progress bar, and a scrolling log tail.
+- **Class-name editor** on `/train/configure` — rename each class in place before training. Names are written into the dataset's `data.yaml` and embedded in the trained checkpoint so `/predict` shows them automatically. Empty / duplicate names are rejected on both client and backend (`PATCH /api/datasets/{id}/classes`).
+- **Placeholder-name detection**: plain-YOLO datasets that come without a `data.yaml` get `class_0…class_N` placeholders that the editor highlights in amber, with a callout reminding you to rename them before training.
+- **Cancel in-flight training** via a SIGTERM to the subprocess group (`start_new_session=True` on POSIX, `CREATE_NEW_PROCESS_GROUP` on Windows). The `/train/run` page shows a Cancel button while the run is queued/running.
+- **Save-to-library** copies the run's `best.pt` into `<storage_root>/models/detect/trained-<short_id>.pt`, refreshes the registry, sets it as the new detection default, and surfaces an **Open in Predict** button so the doctor lands one click away from running their fresh model on slide patches.
+- Backend subprocess wrapper (`engine/training.py` + `engine/train_runner.py`): job manager keeps an in-memory event log; a reader thread tails subprocess stdout; JSON-line events (`{_VRL_EVENT: true, type, …}`) are interleaved with raw log lines; the WebSocket handler replays every event on connect so a refresh lands a coherent snapshot.
+- New routes: `POST /api/training/start` (returns 202 + `job_id`), `GET /api/training/{id}`, `WS /api/training/{id}/stream`, `POST /api/training/{id}/cancel`, `POST /api/training/{id}/save-to-library`.
+- Hardware-aware: training inherits the configure-page accelerator probe (CUDA / MPS / CPU). Cross-version metric-key probes (`metrics/mAP50(B)` vs `metrics/mAP_0.5`) so the same UI works across Ultralytics 8.3 / 8.4.
+
+### Fixed
+- **Ultralytics auto-suffixed run names**: the job manager pre-creates `<output_dir>/<job_id>/` so we know where to find `best.pt`, but Ultralytics would write to `<job_id>-2/` because `exist_ok` defaulted to `False`. Now passing `exist_ok=True` to `model.train()` so the run lands exactly where the manager expects it.
+
+### Known limitations (deferred)
+- Some loss metrics (box / cls / dfl) come through as `null` on certain Ultralytics versions where they live under different keys than the validation mAPs. The chart connects across nulls; the failing keys are dropped silently rather than crashing the stream.
+- Training jobs are kept in-memory only — restarting uvicorn (e.g. via `run-desktop --clean`) loses the job snapshot. The on-disk `<storage_root>/training/<job_id>/` run artefacts survive, so you can still grab `best.pt` manually.
+- Classification training is still detection-only at the UI level; P5 ships the classify branch (`task=classify` ImageFolder + top-1/top-5 metrics).
+- Colab tunnel handoff (PLAN.md §11) lands in P4c — when no accelerator is detected, the wizard currently still lets you start a CPU run instead of suggesting Colab.
+
+---
+
 ## [0.6.1] — 2026-05-17 · P4a.fix-1: Train — Dataset upload fix + split helper
 
 No tag — between-phase patch.

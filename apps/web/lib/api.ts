@@ -7,7 +7,9 @@ import type {
   ModelsListResponse,
   PresetsListResponse,
   ReportRequestBody,
+  StartTrainingBody,
   Task,
+  TrainingJobInfo,
 } from "./types";
 
 const API_BASE =
@@ -272,4 +274,82 @@ export function uploadDataset(
     }
     xhr.send(form);
   });
+}
+
+/**
+ * Rename the dataset's class list. Order must match the original — the
+ * backend only rewrites the `names:` field in data.yaml; on-disk label
+ * files (which reference class indices, not names) stay untouched.
+ *
+ * Validation lives on both sides: the backend rejects empty / non-unique /
+ * length-mismatched payloads with 400.
+ */
+export async function renameDatasetClasses(
+  datasetId: string,
+  names: string[],
+): Promise<DatasetInfo> {
+  return fetchJson(
+    `${API_BASE}/datasets/${encodeURIComponent(datasetId)}/classes`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ names }),
+    },
+  );
+}
+
+// --- Training (P4b) ----------------------------------------------------
+
+export interface StartTrainingResponse {
+  job_id: string;
+}
+
+export async function startTraining(
+  body: StartTrainingBody,
+): Promise<StartTrainingResponse> {
+  return fetchJson(`${API_BASE}/training/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getTrainingJob(jobId: string): Promise<TrainingJobInfo> {
+  return fetchJson(`${API_BASE}/training/${encodeURIComponent(jobId)}`);
+}
+
+export async function cancelTraining(jobId: string): Promise<void> {
+  await fetchJson(
+    `${API_BASE}/training/${encodeURIComponent(jobId)}/cancel`,
+    { method: "POST" },
+  );
+}
+
+/**
+ * Copy the run's best.pt into `<storage_root>/models/detect/` and return
+ * the freshly-registered ModelInfo. Caller can navigate straight to
+ * /predict with the trained model preselected.
+ */
+export async function saveTrainingToLibrary(
+  jobId: string,
+): Promise<ModelInfo> {
+  return fetchJson(
+    `${API_BASE}/training/${encodeURIComponent(jobId)}/save-to-library`,
+    { method: "POST" },
+  );
+}
+
+/**
+ * Build the WebSocket URL for a job's event stream. The handler replays
+ * every event so far, then streams new ones until the job hits a terminal
+ * state (completed / failed / cancelled), so a refresh always lands the
+ * client on a coherent snapshot.
+ */
+export function trainingStreamUrl(jobId: string): string {
+  const origin =
+    typeof window !== "undefined" && window.location.origin
+      ? window.location.origin
+      : "";
+  const wsBase = origin.replace(/^http/, "ws");
+  return `${wsBase}/api/training/${encodeURIComponent(jobId)}/stream`;
 }

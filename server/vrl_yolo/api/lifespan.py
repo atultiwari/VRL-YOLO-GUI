@@ -7,7 +7,8 @@ from fastapi import FastAPI
 from vrl_yolo.config import Settings
 from vrl_yolo.engine.inference import InferenceEngine
 from vrl_yolo.engine.registry import ModelRegistry
-from vrl_yolo.paths import resolve_bundled_models_dir, user_models_dir
+from vrl_yolo.engine.training import JobManager
+from vrl_yolo.paths import resolve_bundled_models_dir, resolve_storage_root, user_models_dir
 
 
 @asynccontextmanager
@@ -33,6 +34,10 @@ async def lifespan(app: FastAPI):
 
     registry = ModelRegistry(bundled_dir=bundled, user_dir=user)
 
+    storage_root = settings.storage_path or resolve_storage_root()
+    job_manager = JobManager(storage_root=storage_root)
+
     app.state.registry = registry
     app.state.engine = InferenceEngine(registry)
+    app.state.job_manager = job_manager
     yield

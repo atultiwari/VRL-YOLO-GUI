@@ -154,3 +154,75 @@ export interface HardwareInfo {
   vram_gb: number | null;
   suggested_batch_size: number;
 }
+
+// --- Training ---
+
+export type TrainingStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface TrainingMetrics {
+  box_loss: number | null;
+  cls_loss: number | null;
+  dfl_loss: number | null;
+  mAP50: number | null;
+  mAP50_95: number | null;
+}
+
+export interface TrainingJobInfo {
+  job_id: string;
+  status: TrainingStatus;
+  dataset_id: string;
+  model: string;
+  epochs_total: number;
+  epoch_current: number;
+  started_at: string;
+  finished_at: string | null;
+  accelerator_kind: "cuda" | "mps" | "cpu";
+  output_dir: string;
+  metrics: TrainingMetrics;
+  error_message: string | null;
+}
+
+export interface StartTrainingBody {
+  dataset_id: string;
+  model: string;
+  epochs: number;
+  imgsz: number;
+  batch: number;
+}
+
+// Events shipped over /api/training/{id}/stream. Frontend reduces these
+// into a TrainingJobInfo snapshot + scrolling log + Recharts series.
+export type TrainingEvent =
+  | { type: "hello"; job_id: string; status: TrainingStatus }
+  | {
+      type: "start";
+      ts: number;
+      dataset: string;
+      model: string;
+      epochs: number;
+      imgsz: number;
+      batch: number;
+      device: string | null;
+    }
+  | {
+      type: "epoch";
+      ts: number;
+      epoch: number;
+      epoch_total: number;
+      metrics: TrainingMetrics;
+    }
+  | {
+      type: "complete";
+      ts: number;
+      best_pt: string | null;
+      metrics: Partial<TrainingMetrics>;
+    }
+  | { type: "error"; ts: number; message: string; traceback?: string }
+  | { type: "cancelled"; ts: number; message?: string }
+  | { type: "log"; ts: number; line: string }
+  | { type: "closed"; status: TrainingStatus };

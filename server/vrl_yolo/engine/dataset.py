@@ -775,6 +775,47 @@ def _safe_move(src: Path, dst: Path) -> None:
         counter += 1
 
 
+def rename_classes(dataset_root: Path, names: list[str]) -> DatasetInfo:
+    """Rewrite the class names on `data.yaml`, preserve everything else.
+
+    Validation lives at the route level (length match, non-empty, unique);
+    this function only mechanically edits the file. If no `data.yaml`
+    exists yet (plain YOLO without one), one is created so subsequent
+    Ultralytics calls can read the names.
+
+    Returns the re-inspected `DatasetInfo` so the caller can hand the
+    fresh payload straight back to the frontend without an extra fetch.
+    """
+    if not dataset_root.is_dir():
+        raise FileNotFoundError(dataset_root)
+
+    data_yaml = dataset_root / "data.yaml"
+    if data_yaml.is_file():
+        try:
+            existing: dict = yaml.safe_load(data_yaml.read_text()) or {}
+        except (yaml.YAMLError, OSError):
+            existing = {}
+    else:
+        existing = {}
+
+    # Preserve key order from the existing file where possible so a diff
+    # only shows the names change. Fall back to a sensible default order.
+    out: dict[str, object] = {}
+    preserved_keys = ("train", "val", "test", "path", "nc", "names")
+    for key in preserved_keys:
+        if key in existing:
+            out[key] = existing[key]
+    for key, value in existing.items():
+        if key not in out:
+            out[key] = value
+
+    out["nc"] = len(names)
+    out["names"] = list(names)
+
+    data_yaml.write_text(yaml.safe_dump(out, sort_keys=False))
+    return inspect_dataset(dataset_root)
+
+
 def class_counts_from_yolo_labels(root: Path) -> Counter[str]:
     """Walk a YOLO labels/ tree and return per-class instance counts.
 

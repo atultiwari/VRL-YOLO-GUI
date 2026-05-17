@@ -205,3 +205,67 @@ class SplitDatasetRequest(BaseModel):
     valid_ratio: float = Field(0.1, ge=0.0, le=1.0)
     test_ratio: float = Field(0.1, ge=0.0, le=1.0)
     seed: int = 42
+
+
+class RenameClassesRequest(BaseModel):
+    """Body for `PATCH /api/datasets/{id}/classes`.
+
+    Length must match the dataset's existing class count — adding or
+    removing classes is out of scope for v1 (would require re-labelling).
+    Empty strings and duplicates are rejected at the route layer.
+    """
+
+    names: list[str] = Field(..., min_length=1)
+
+
+# --- Training job ---
+
+
+TrainingStatus = Literal[
+    "queued", "running", "completed", "failed", "cancelled"
+]
+
+
+class StartTrainingRequest(BaseModel):
+    """Body for `POST /api/training/start`."""
+
+    dataset_id: str
+    model: str
+    epochs: int = Field(50, ge=1, le=2000)
+    imgsz: int = Field(640, ge=64, le=2048)
+    batch: int = Field(8, ge=1, le=128)
+
+
+class TrainingMetrics(BaseModel):
+    """Last-seen metrics from the training subprocess.
+
+    Fields default to None until at least one epoch finishes. mAP fields
+    populate only after the first validation pass (every epoch by
+    default; users can disable val by skipping the `val:` key in
+    data.yaml — but P4a's wizard makes that hard).
+    """
+
+    box_loss: float | None = None
+    cls_loss: float | None = None
+    dfl_loss: float | None = None
+    mAP50: float | None = None
+    mAP50_95: float | None = None
+
+
+class TrainingJobInfo(BaseModel):
+    job_id: str
+    status: TrainingStatus
+    dataset_id: str
+    model: str
+    epochs_total: int
+    epoch_current: int = 0
+    started_at: str  # ISO 8601 UTC
+    finished_at: str | None = None
+    accelerator_kind: Literal["cuda", "mps", "cpu"]
+    output_dir: str
+    metrics: TrainingMetrics = Field(default_factory=TrainingMetrics)
+    error_message: str | None = None
+
+
+class StartTrainingResponse(BaseModel):
+    job_id: str

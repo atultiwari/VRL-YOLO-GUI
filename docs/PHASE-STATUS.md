@@ -18,15 +18,15 @@
 | P3b.fix-1 — QtWebEngine downloads | ✅ done | — | `cd1a92b` |
 | **P4a — Train (Detection) wizard** | ✅ done | `v0.6-p4a-train-detect-wizard` | `08d5f46` |
 | P4a.fix-1 — Dataset upload + split helper | ✅ done | — | `debf84b` |
-| P4b — Train (Detection) local run | ⏳ next | — | — |
-| P5 — Train (Classification) | ⏳ pending | — | — |
+| **P4b — Train (Detection) local run** | ✅ done | `v0.7-p4b-train-detect-run` | `pending` |
+| P5 — Train (Classification) | ⏳ next | — | — |
 | P6 — Train on Colab | ⏳ pending | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at the P4a commit (`v0.6-p4a-train-detect-wizard`). **Next phase:** P4b — Train (Detection) local run: subprocess wrapper around `ultralytics.train()`, live metric WebSocket, results page with confusion matrix + "Save to library".
+**Current head:** `main` at the P4b commit (`v0.7-p4b-train-detect-run`). **Next phase:** P5 — Train (Classification): same wizard pattern as P4a/P4b but for `task=classify` with ImageFolder layouts, top-1/top-5 metric streams, and per-class confidence summaries.
 
 ---
 
@@ -287,18 +287,65 @@ pnpm build (desktop)                   → /train 3.15 kB · /train/configure 6.
 - Plain YOLO datasets (no `data.yaml`) require manual class-naming on the configure page — currently we warn but there's no inline editor (lands with the run page in P4b).
 - Multipart upload is the only way to ship a dataset right now. Native folder-picker bridge for desktop mode lands in P7.
 
+### ✅ P4b — Train (Detection) local run · `v0.7-p4b-train-detect-run`
+
+**Phase deliverable:** the doctor presses **Start training**, watches an
+Ultralytics subprocess train against their dataset with live per-epoch
+loss + mAP charts, can cancel mid-run, and on completion saves the best
+checkpoint straight into the model library so `/predict` can use it on
+the next slide patch.
+
+**Sub-phases (P4b plus the user-requested class-name editor extra):**
+
+| # | Subject | Outcome |
+|---|---|---|
+| P4b.E1 | Class-name editor (backend + UI) | `PATCH /api/datasets/{id}/classes` rewrites the dataset's `data.yaml` (preserving key order, embedding the new list, refusing length-mismatched / empty / duplicate names). New `components/train/class-names-editor.tsx` renders one input per class, highlights `class_<N>` placeholders in amber, validates client-side before submit, fires a single Apply call. Wired into `/train/configure` above the model + preset card. |
+| P4b.1 | Training engine | `engine/train_runner.py` — subprocess entry script invoked as `python -m vrl_yolo.engine.train_runner ...`. Registers `on_fit_epoch_end` callback that emits JSON-line events (`{_VRL_EVENT: true, type, ...}`) to stdout. Cross-version metric-key probes for `train/{box,cls,dfl}_loss` + `metrics/mAP50(B)` / `metrics/mAP_0.5` so the same UI works across Ultralytics 8.3 / 8.4. `exist_ok=True` on `model.train()` so the JobManager-precreated output directory is reused (Ultralytics would otherwise auto-suffix to `<name>-2/`). |
+| P4b.2 | Job manager | `engine/training.py` — `JobManager` singleton with `TrainingJob` dataclass tracking events / status / metrics. `start()` spawns `subprocess.Popen` with `start_new_session=True` (POSIX) or `CREATE_NEW_PROCESS_GROUP` (Windows). Reader thread tails stdout, classifying lines as JSON events vs raw log via `_classify_line()`. `cancel()` sends SIGTERM to the process group. `save_to_library()` copies `best.pt` to `registry._user_dir/detect/trained-<short_id>.pt` and triggers `registry.scan()`. Lifespan + deps wire it on `app.state.job_manager`. |
+| P4b.3 | Routes | `POST /api/training/start` (202 + job_id), `GET /api/training/{id}` (snapshot), `POST /api/training/{id}/cancel` (204), `POST /api/training/{id}/save-to-library` (returns the registered ModelInfo), `WS /api/training/{id}/stream` (replays events + polls every 300 ms until terminal). |
+| P4b.4 | Frontend types + state + actions | New `TrainingStatus` / `TrainingMetrics` / `TrainingJobInfo` / `StartTrainingBody` / `TrainingEvent` (discriminated union) in `lib/types.ts`. `startTraining`, `getTrainingJob`, `cancelTraining`, `saveTrainingToLibrary`, `trainingStreamUrl`, `renameDatasetClasses` in `lib/api.ts`. `activeJobId` + `setActiveJob` added to the Train store (persisted, so a refresh on `/train/run` picks up the live stream). |
+| P4b.5 | /train/configure start mutation | "Continue → Run training" became "Start training": calls `startTraining`, stores `job_id` in the store, navigates to `/train/run`. Errors surface inline above the button. |
+| P4b.6 | /train/run live page | Replaced the P4a preview placeholder with the full live UI: status badge with WebSocket connection indicator, epoch progress bar, two Recharts `LineChart`s side-by-side (loss curves vs mAP curves, with `connectNulls` so per-version key gaps don't break the line), scrolling 200-line log tail, action bar that swaps between Cancel (running) → Save to library (completed) → Open in Predict (after save) + Train another (terminal). |
+
+**Verification:**
+
+```
+step: backend ready in 64 ms
+GET  /api/health                          → version 0.7.0
+PATCH /api/datasets/{id}/classes          → 200 (renames in data.yaml only;
+                                              label files reference IDs, not names)
+POST /api/training/start                  → 202 {job_id: "<uuid>"}
+GET  /api/training/{job_id}               → TrainingJobInfo (running, epoch_current ticks up)
+WS   /api/training/{job_id}/stream        → hello → start → epoch×N → complete → closed
+POST /api/training/{job_id}/save-to-library
+                                          → 200 ModelInfo {name: "trained-<short>.pt",
+                                                            source: "user", task: "detect"}
+GET  /api/models                          → trained checkpoint listed alongside bundled weights
+pnpm type-check                           → clean
+pnpm build (desktop)                      → /train 3.18 kB · /train/configure 10.6 kB
+                                              /train/dataset 5.55 kB · /train/run 11.6 kB
+```
+
+End-to-end smoke: 4-image dataset, 1 epoch, YOLO26n on Apple Silicon MPS, 30 s wall-clock from Start to Save-to-library.
+
+**Known limitations carried into P5:**
+- Loss metrics (box / cls / dfl) come through as `null` on some Ultralytics builds where they live under different keys than the validation mAPs. Chart connects across nulls; the dropped keys are silent rather than crashing the stream.
+- Training jobs are in-memory only — restarting uvicorn (e.g. `run-desktop --clean`) loses the snapshot. The on-disk `<storage_root>/training/<job_id>/` run artefacts survive, so `best.pt` is reachable manually.
+- Classification training is still detection-only at the UI level; P5 adds the classify branch (`task=classify` ImageFolder + top-1 / top-5 metric streams).
+- Colab tunnel handoff (PLAN.md §11) lands in P4c — when no accelerator is detected, the wizard currently still lets you start a CPU run instead of suggesting Colab.
+
 ---
 
-## Up next: P4b — Train (Detection) local run
+## Up next: P5 — Train (Classification)
 
-**Estimated 1 week** per PLAN.md §14. Scope:
+**Estimated 4–5 days** per PLAN.md §14. Scope:
 
-- `engine/training.py` — subprocess wrapper around `model.train(...)`; parses Ultralytics' stdout into structured metric events.
-- `POST /api/training/start` returns a job id; `WS /api/training/{job_id}/stream` pushes per-epoch loss / mAP50 / mAP50-95 + accuracy.
-- `/train/run` becomes a live page: start, cancel, progress, live Recharts curves for loss + mAP, last-epoch sample predictions.
-- Results page: confusion matrix, per-class AP, sample val predictions, **Save to model library** (writes `best.pt` into `<storage_root>/models/<task>/<run-name>/best.pt` so `/models` picks it up via `source: trained`).
+- Detect classify task on `/train` task picker; classify branch in the dataset wizard accepts ImageFolder layouts.
+- `engine/training.py` already runs subprocesses for both tasks — the runner script needs a classify branch that emits `top1_accuracy` / `top5_accuracy` instead of mAPs.
+- `/train/run` chart switches axis labels + series for classify runs (read from the `TrainingJobInfo.task` field).
+- Save-to-library copies to `models/classify/trained-<short>.pt`.
 
-**Phase tag at completion:** `v0.7-p4b-train-detect-run`.
+**Phase tag at completion:** `v0.8-p5-train-classify`.
 
 ---
 

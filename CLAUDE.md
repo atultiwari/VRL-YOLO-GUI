@@ -17,7 +17,7 @@ background. Success = doctor installs one binary, drops a folder of slide
 patches, gets annotated images (detect) or a prediction table + PDF (classify)
 in under 10 minutes.
 
-**Status (v0.6.0, 2026-05-17):**
+**Status (v0.7.0, 2026-05-17):**
 - ✅ Pre — `CLAUDE.md` entry guide (`9bd0b83`)
 - ✅ **P0** — Scaffolding · `v0.1-p0-scaffolding` (`d06e9e2`)
 - ✅ **P1** — Predict (Detection) · `v0.2-p1-predict-detect` (`2acd8f5`)
@@ -28,7 +28,9 @@ in under 10 minutes.
 - ✅ **P3b** — Predict v1: reports, import & settings · `v0.5-p3b-predict-reports` (`0d05150`)
 - ✅ P3b.fix-1 — QtWebEngine downloads (`cd1a92b`)
 - ✅ **P4a** — Train (Detection) wizard · `v0.6-p4a-train-detect-wizard`
-- ⏳ **P4b next** — Train (Detection) local run (subprocess + live metrics + results)
+- ✅ P4a.fix-1 — Roboflow upload + prepare-splits helper (`debf84b`)
+- ✅ **P4b** — Train (Detection) local run · `v0.7-p4b-train-detect-run` (live charts, cancel, save-to-library, class-name editor)
+- ⏳ **P5 next** — Train (Classification): wizard + subprocess + top-1/top-5 metric streams
 
 **P3b also shipped three user-requested extras:**
 - Settings page (sidebar + localStorage hook)

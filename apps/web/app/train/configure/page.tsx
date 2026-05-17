@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -8,12 +8,14 @@ import {
   Cpu,
   Database,
   Gauge,
+  Play,
   SlidersHorizontal,
   Zap,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { ClassNamesEditor } from "@/components/train/class-names-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,7 +28,13 @@ import {
 import { Select } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
-import { fetchDataset, fetchHardware, fetchModels } from "@/lib/api";
+import {
+  ApiError,
+  fetchDataset,
+  fetchHardware,
+  fetchModels,
+  startTraining,
+} from "@/lib/api";
 import { useTrainStore, type TrainPreset } from "@/lib/train-store";
 import type { DatasetInfo, HardwareInfo } from "@/lib/types";
 import { cn, formatBytes } from "@/lib/utils";
@@ -58,8 +66,16 @@ const PRESET_CHOICES: { value: TrainPreset; label: string; description: string }
 
 export default function TrainConfigurePage() {
   const router = useRouter();
-  const { selectedTask, dataset, hyperparams, setDataset, patchHyperparams, applyPreset } =
-    useTrainStore();
+  const {
+    selectedTask,
+    dataset,
+    hyperparams,
+    setDataset,
+    patchHyperparams,
+    applyPreset,
+    setActiveJob,
+  } = useTrainStore();
+  const [startError, setStartError] = useState<string | null>(null);
 
   // If we got here without a dataset (e.g. fresh tab, store hydrated but
   // dataset was cleared by a "Reset desktop storage"), redirect back.
@@ -124,7 +140,33 @@ export default function TrainConfigurePage() {
     label: `${m.name}  ·  ${m.num_classes} cls  ·  ${formatBytes(m.size_mb)}`,
   }));
 
-  const onContinue = () => router.push("/train/run");
+  const start = useMutation({
+    mutationFn: async () => {
+      if (!dataset) throw new Error("no dataset");
+      if (!hyperparams.model) throw new Error("pick a model first");
+      return startTraining({
+        dataset_id: dataset.id,
+        model: hyperparams.model,
+        epochs: hyperparams.epochs,
+        imgsz: hyperparams.image_size,
+        batch: hyperparams.batch_size,
+      });
+    },
+    onSuccess: (res) => {
+      setStartError(null);
+      setActiveJob(res.job_id);
+      router.push("/train/run");
+    },
+    onError: (err) => {
+      setStartError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+          ? err.message
+          : "Failed to start training",
+      );
+    },
+  });
 
   if (!dataset) return null;
 
@@ -152,6 +194,7 @@ export default function TrainConfigurePage() {
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
         <div className="space-y-4">
+          <ClassNamesEditor dataset={dataset} onDatasetChanged={setDataset} />
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -249,13 +292,32 @@ export default function TrainConfigurePage() {
         </div>
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex flex-col items-end gap-2">
+        {startError ? (
+          <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-800">
+            <AlertTriangle className="size-4" />
+            {startError}
+          </div>
+        ) : null}
         <Button
           size="lg"
-          disabled={!hyperparams.model || dataset.format === "unknown"}
-          onClick={onContinue}
+          disabled={
+            !hyperparams.model ||
+            dataset.format === "unknown" ||
+            start.isPending
+          }
+          onClick={() => start.mutate()}
         >
-          Continue → Run training <ArrowRight className="size-4" />
+          {start.isPending ? (
+            <>
+              <Spinner /> Starting…
+            </>
+          ) : (
+            <>
+              <Play className="size-4" /> Start training{" "}
+              <ArrowRight className="size-4" />
+            </>
+          )}
         </Button>
       </div>
     </section>

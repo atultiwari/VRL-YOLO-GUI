@@ -33,11 +33,18 @@ interface TrainState {
   selectedTask: Task | null;
   dataset: DatasetInfo | null;
   hyperparams: TrainHyperparams;
+  /**
+   * Currently-streaming job. We persist this so a refresh on /train/run
+   * picks up the stream right where it left off — the WebSocket replays
+   * past events on reconnect so the chart redraws fully.
+   */
+  activeJobId: string | null;
 
   setTask: (task: Task | null) => void;
   setDataset: (info: DatasetInfo | null) => void;
   patchHyperparams: (patch: Partial<TrainHyperparams>) => void;
   applyPreset: (preset: TrainPreset) => void;
+  setActiveJob: (jobId: string | null) => void;
   reset: () => void;
 }
 
@@ -66,6 +73,7 @@ export const useTrainStore = create<TrainState>()(
       selectedTask: null,
       dataset: null,
       hyperparams: { ...DEFAULT_HYPERPARAMS },
+      activeJobId: null,
 
       setTask: (task) => set({ selectedTask: task }),
       setDataset: (info) => set({ dataset: info }),
@@ -98,11 +106,13 @@ export const useTrainStore = create<TrainState>()(
             },
           };
         }),
+      setActiveJob: (jobId) => set({ activeJobId: jobId }),
       reset: () =>
         set({
           selectedTask: null,
           dataset: null,
           hyperparams: { ...DEFAULT_HYPERPARAMS },
+          activeJobId: null,
         }),
     }),
     {
