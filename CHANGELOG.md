@@ -12,6 +12,16 @@ for the running tracker.
 
 ---
 
+## [0.5.1] — 2026-05-17 · P3b.fix-1: Predict — Downloads fix
+
+No tag — between-phase patch.
+
+### Fixed
+- **Export buttons in `/predict` folder mode now actually deliver a file.** The v0.5.0 build had CSV / XLSX / PDF buttons silently dropping the download because QtWebEngine blocks downloads until something connects to the profile's `downloadRequested` signal. Pyloid's window doesn't ship a download manager, so the export request reached the backend, returned 200 with the right `Content-Disposition`, then the blob URL click went nowhere.
+- Added `_install_download_handler()` in `src-pyloid/main.py`: auto-accepts every download, drops it in `~/Downloads/` with a unique-name suffix (e.g. `vrl-yolo-detect-...csv` → `vrl-yolo-detect-... (1).csv` if a file with the same name already exists), and logs the destination via the `step:` prefix so the user can see where the file went in `launch.log`.
+
+---
+
 ## [0.5.0] — 2026-05-17 · P3b: Predict — Reports, Import & Settings
 
 **Tag:** `v0.5-p3b-predict-reports`
@@ -116,6 +126,7 @@ for the running tracker.
 
 ---
 
+[0.5.1]: https://github.com/atultiwari/VRL-YOLO-GUI/commits/main
 [0.5.0]: https://github.com/atultiwari/VRL-YOLO-GUI/releases/tag/v0.5-p3b-predict-reports
 [0.4.0]: https://github.com/atultiwari/VRL-YOLO-GUI/releases/tag/v0.4-p3a-predict-batch
 [0.3.0]: https://github.com/atultiwari/VRL-YOLO-GUI/releases/tag/v0.3-p2-predict-classify

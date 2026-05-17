@@ -41,13 +41,27 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.5.1",
+    phase: "P3b.fix-1",
+    title: "Predict — Downloads fix",
+    tag: null,
+    commit: "TBD",
+    date: "2026-05-17",
+    status: "current",
+    features: [],
+    fixes: [
+      "CSV / XLSX / PDF export buttons in /predict folder mode now actually deliver a file — the v0.5.0 build had them silently dropping the download because QtWebEngine blocks downloads until something connects to the profile's `downloadRequested` signal. Pyloid's window doesn't ship a download manager, so the export request reached the backend, returned 200 with the right `Content-Disposition`, then the blob URL click went nowhere.",
+      "Added `_install_download_handler()` in src-pyloid/main.py: auto-accepts every download, drops it in `~/Downloads/` with a unique-name suffix (e.g. `vrl-yolo-detect-...csv` → `vrl-yolo-detect-... (1).csv` if a file with the same name already exists), and logs the destination path via the `step:` prefix so the user can see where the file went in launch.log.",
+    ],
+  },
+  {
     version: "0.5.0",
     phase: "P3b",
     title: "Predict — Reports, Import & Settings",
     tag: "v0.5-p3b-predict-reports",
     commit: "0d05150",
     date: "2026-05-17",
-    status: "current",
+    status: "shipped",
     features: [
       "Settings page (new /settings route, sidebar entry under 'Preferences') with localStorage-backed preferences. First toggle: show / hide clinical workflow presets in /predict (default: hidden — the bundled COCO/ImageNet weights don't have clinical class names yet).",
       "Folder-batch image preview: click any row in the per-image table to see that file's image with detection boxes or the classify top-5 chart in a preview pane above the aggregate.",

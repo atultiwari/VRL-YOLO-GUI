@@ -164,6 +164,65 @@ def _install_macos_shutdown_workaround() -> None:
     app.aboutToQuit.connect(_hard_exit, type=Qt.ConnectionType.DirectConnection)
 
 
+def _install_download_handler() -> None:
+    """Auto-accept QtWebEngine downloads into ~/Downloads.
+
+    QtWebEngine **silently drops** downloads (anchor with `download=`,
+    `window.location = blob:...`, server-side `Content-Disposition:
+    attachment`) unless something connects to the profile's
+    `downloadRequested` signal and calls `.accept()`. A regular browser
+    has Chrome's download manager on the other end of that signal; the
+    Pyloid window doesn't, so clicking the CSV / XLSX / PDF export
+    buttons in /predict appeared to do nothing.
+
+    This hook makes the buttons actually deliver a file:
+
+    1. Resolve the destination directory (`~/Downloads`, creating it
+       if missing — usually present on macOS / Windows but not always
+       on Linux).
+    2. Pick a unique filename — if `vrl-yolo-detect-...csv` already
+       exists, fall through to `vrl-yolo-detect-... (1).csv`, etc.
+    3. Call `download.accept()`.
+    4. Log the destination via `step:` print so launch.log shows where
+       the file went.
+
+    Native save dialog is out of scope here — the goal is "files
+    actually appear", not "files appear at the user's chosen path".
+    Switching to a native QFileDialog is a P7 polish item.
+    """
+    try:
+        from PySide6.QtWebEngineCore import QWebEngineProfile
+    except ImportError:
+        return
+
+    profile = QWebEngineProfile.defaultProfile()
+    if profile is None:
+        return
+
+    downloads_dir = Path.home() / "Downloads"
+
+    def _on_download_requested(download) -> None:  # noqa: ANN001 — PySide6 typing varies
+        try:
+            downloads_dir.mkdir(parents=True, exist_ok=True)
+            suggested = download.suggestedFileName() or "vrl-yolo-download"
+            base = Path(suggested)
+            dest = downloads_dir / base.name
+            counter = 1
+            stem, ext = dest.stem, dest.suffix
+            while dest.exists():
+                dest = downloads_dir / f"{stem} ({counter}){ext}"
+                counter += 1
+            download.setDownloadDirectory(str(dest.parent))
+            download.setDownloadFileName(dest.name)
+            download.accept()
+            print(f"step: download accepted -> {dest}")
+        except Exception as exc:  # noqa: BLE001 — never let a download crash the app
+            print(f"step: download handler error: {exc}")
+
+    profile.downloadRequested.connect(_on_download_requested)
+    print("step: download handler installed (Downloads dir: {})".format(downloads_dir))
+
+
 def _setup_splash():
     """Construct the right splash for the current runtime.
 
@@ -325,6 +384,7 @@ def main() -> int:
     pyloid = Pyloid(app_name="VRL-YOLO-GUI", single_instance=True)
 
     _install_macos_shutdown_workaround()
+    _install_download_handler()
 
     window = pyloid.create_window(
         title="VRL YOLO GUI — Histopathology and Hematology",
