@@ -48,6 +48,7 @@ import {
 import { useTrainStore } from "@/lib/train-store";
 import type {
   ModelInfo,
+  Task,
   TrainingEvent,
   TrainingJobInfo,
   TrainingMetrics,
@@ -70,11 +71,16 @@ const STATUS_TONE: Record<
 
 interface ChartRow {
   epoch: number;
+  // detect-only
   box_loss: number | null;
   cls_loss: number | null;
   dfl_loss: number | null;
   mAP50: number | null;
   mAP50_95: number | null;
+  // classify-only
+  loss: number | null;
+  top1: number | null;
+  top5: number | null;
 }
 
 export default function TrainRunPage() {
@@ -146,6 +152,9 @@ export default function TrainRunPage() {
             dfl_loss: event.metrics.dfl_loss,
             mAP50: event.metrics.mAP50,
             mAP50_95: event.metrics.mAP50_95,
+            loss: event.metrics.loss,
+            top1: event.metrics.top1,
+            top5: event.metrics.top5,
           };
           setSeriesByEpoch((prev) => {
             const next = new Map(prev);
@@ -269,9 +278,11 @@ export default function TrainRunPage() {
       if (!activeJobId) throw new Error("no active job");
       const model = await saveTrainingToLibrary(activeJobId);
       // Make this model the new default for /predict so the trained run
-      // is one click away.
+      // is one click away. Use the model's reported task (not the
+      // snapshot's) — the server is the source of truth for what the
+      // checkpoint actually contains.
       try {
-        await setDefaultModel("detect", model.name);
+        await setDefaultModel(model.task, model.name);
       } catch {
         // Non-fatal — the model is in the library either way.
       }
@@ -305,6 +316,12 @@ export default function TrainRunPage() {
 
   const isTerminal =
     status === "completed" || status === "failed" || status === "cancelled";
+
+  // Source of truth for which charts to draw. Falls back to detect for
+  // the brief moment between mount and the first `/api/training/{id}`
+  // response — by the time the first epoch event arrives `snapshot.task`
+  // is set, so the chart re-renders correctly.
+  const task: Task = snapshot?.task ?? "detect";
 
   const statusBadge = STATUS_TONE[status];
 
@@ -369,21 +386,41 @@ export default function TrainRunPage() {
       />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <MetricCard
-          title="Loss"
-          description="train/{box,cls,dfl}_loss per epoch — lower is better."
-          icon={<LineChartIcon className="size-4 text-accent" />}
-        >
-          <LossChart series={series} />
-        </MetricCard>
-
-        <MetricCard
-          title="mAP"
-          description="Validation mAP per epoch — higher is better."
-          icon={<LineChartIcon className="size-4 text-accent" />}
-        >
-          <MapChart series={series} />
-        </MetricCard>
+        {task === "classify" ? (
+          <>
+            <MetricCard
+              title="Loss"
+              description="train/loss per epoch — lower is better."
+              icon={<LineChartIcon className="size-4 text-accent" />}
+            >
+              <ClassifyLossChart series={series} />
+            </MetricCard>
+            <MetricCard
+              title="Accuracy"
+              description="Validation top-1 + top-5 per epoch — higher is better."
+              icon={<LineChartIcon className="size-4 text-accent" />}
+            >
+              <ClassifyAccuracyChart series={series} />
+            </MetricCard>
+          </>
+        ) : (
+          <>
+            <MetricCard
+              title="Loss"
+              description="train/{box,cls,dfl}_loss per epoch — lower is better."
+              icon={<LineChartIcon className="size-4 text-accent" />}
+            >
+              <LossChart series={series} />
+            </MetricCard>
+            <MetricCard
+              title="mAP"
+              description="Validation mAP per epoch — higher is better."
+              icon={<LineChartIcon className="size-4 text-accent" />}
+            >
+              <MapChart series={series} />
+            </MetricCard>
+          </>
+        )}
       </div>
 
       <LogCard log={log} />
@@ -790,10 +827,137 @@ function statusLabel(status: TrainingStatus): string {
 
 function formatMetrics(m: TrainingMetrics): string {
   const parts: string[] = [];
+  // Detect keys
   if (m.box_loss !== null) parts.push(`box ${m.box_loss.toFixed(4)}`);
   if (m.cls_loss !== null) parts.push(`cls ${m.cls_loss.toFixed(4)}`);
   if (m.dfl_loss !== null) parts.push(`dfl ${m.dfl_loss.toFixed(4)}`);
   if (m.mAP50 !== null) parts.push(`mAP50 ${m.mAP50.toFixed(4)}`);
   if (m.mAP50_95 !== null) parts.push(`mAP50-95 ${m.mAP50_95.toFixed(4)}`);
+  // Classify keys
+  if (m.loss !== null) parts.push(`loss ${m.loss.toFixed(4)}`);
+  if (m.top1 !== null) parts.push(`top1 ${m.top1.toFixed(4)}`);
+  if (m.top5 !== null) parts.push(`top5 ${m.top5.toFixed(4)}`);
   return parts.join(" · ") || "(no metrics)";
+}
+
+function ClassifyLossChart({ series }: { series: ChartRow[] }) {
+  if (series.length === 0) {
+    return <EmptyChart label="Waiting for first epoch…" />;
+  }
+  return (
+    <div className="h-72 w-full">
+      <ResponsiveContainer>
+        <LineChart
+          data={series}
+          margin={{ top: 8, right: 8, bottom: 8, left: 8 }}
+        >
+          <CartesianGrid
+            strokeDasharray="3 3"
+            stroke="var(--color-surface-muted)"
+          />
+          <XAxis
+            dataKey="epoch"
+            tick={{ fontSize: 12 }}
+            stroke="var(--color-ink-muted)"
+            label={{
+              value: "epoch",
+              position: "insideBottom",
+              offset: -4,
+              fontSize: 11,
+            }}
+          />
+          <YAxis
+            tick={{ fontSize: 12 }}
+            stroke="var(--color-ink-muted)"
+            width={48}
+          />
+          <Tooltip
+            formatter={(v: number) => v.toFixed(4)}
+            labelFormatter={(l) => `epoch ${l}`}
+            contentStyle={{
+              backgroundColor: "var(--color-surface)",
+              border: "1px solid var(--color-surface-muted)",
+              fontSize: 12,
+            }}
+          />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Line
+            type="monotone"
+            dataKey="loss"
+            stroke="#ef4444"
+            dot={false}
+            strokeWidth={2}
+            isAnimationActive={false}
+            connectNulls
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function ClassifyAccuracyChart({ series }: { series: ChartRow[] }) {
+  if (series.length === 0) {
+    return <EmptyChart label="Waiting for first epoch…" />;
+  }
+  return (
+    <div className="h-72 w-full">
+      <ResponsiveContainer>
+        <LineChart
+          data={series}
+          margin={{ top: 8, right: 8, bottom: 8, left: 8 }}
+        >
+          <CartesianGrid
+            strokeDasharray="3 3"
+            stroke="var(--color-surface-muted)"
+          />
+          <XAxis
+            dataKey="epoch"
+            tick={{ fontSize: 12 }}
+            stroke="var(--color-ink-muted)"
+            label={{
+              value: "epoch",
+              position: "insideBottom",
+              offset: -4,
+              fontSize: 11,
+            }}
+          />
+          <YAxis
+            domain={[0, 1]}
+            tick={{ fontSize: 12 }}
+            stroke="var(--color-ink-muted)"
+            width={48}
+          />
+          <Tooltip
+            formatter={(v: number) => v.toFixed(4)}
+            labelFormatter={(l) => `epoch ${l}`}
+            contentStyle={{
+              backgroundColor: "var(--color-surface)",
+              border: "1px solid var(--color-surface-muted)",
+              fontSize: 12,
+            }}
+          />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Line
+            type="monotone"
+            dataKey="top1"
+            stroke="#0ea5e9"
+            dot={false}
+            strokeWidth={2}
+            isAnimationActive={false}
+            connectNulls
+          />
+          <Line
+            type="monotone"
+            dataKey="top5"
+            stroke="#10b981"
+            dot={false}
+            strokeWidth={2}
+            isAnimationActive={false}
+            connectNulls
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
 }

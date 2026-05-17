@@ -1,10 +1,11 @@
-"""Subprocess entry point for Ultralytics training.
+"""Subprocess entry point for Ultralytics training (detect + classify).
 
 Invoked by the parent FastAPI process as::
 
     python -m vrl_yolo.engine.train_runner \
         --dataset /abs/path/to/dataset-uuid \
         --model yolo26n.pt \
+        --task detect \
         --project /abs/path/to/training \
         --name <job_id> \
         --epochs 50 \
@@ -27,9 +28,9 @@ the UI) — the parent treats every other stdout line as a `log` event.
 Events:
 
 - ``start`` — first event, fired before `model.train()` returns.
-  ``{"type":"start","model":"yolo26n.pt","epochs":50, ...}``
-- ``epoch`` — per epoch. Carries the latest box/cls/dfl loss and (after
-  the first validation pass) mAP50 + mAP50-95.
+  ``{"type":"start","model":"yolo26n.pt","task":"detect","epochs":50, ...}``
+- ``epoch`` — per epoch. Carries whichever metrics the task exposes:
+  detect → box/cls/dfl loss + mAP50/mAP50-95; classify → loss + top-1/top-5.
   ``{"type":"epoch","epoch":3,"epoch_total":50,"metrics":{...}}``
 - ``complete`` — final event on success.
   ``{"type":"complete","best_pt":"/abs/path","metrics":{...}}``
@@ -69,9 +70,9 @@ def _safe_get(d: dict, key: str) -> float | None:
         return None
 
 
-# Ultralytics metric keys vary slightly by version (`metrics/mAP50(B)` in
-# 8.4, `metrics/mAP_0.5` in some older variants). We probe several names.
-_METRIC_KEYS = {
+# Ultralytics metric keys vary slightly by version. We probe several names
+# per logical key so the same wire shape works across 8.3 / 8.4 / 8.5+.
+_DETECT_METRIC_KEYS: dict[str, tuple[str, ...]] = {
     "box_loss": ("train/box_loss",),
     "cls_loss": ("train/cls_loss",),
     "dfl_loss": ("train/dfl_loss",),
@@ -79,11 +80,24 @@ _METRIC_KEYS = {
     "mAP50_95": ("metrics/mAP50-95(B)", "metrics/mAP_0.5:0.95"),
 }
 
+# Classify head exposes a single training loss + two validation accuracies.
+# Loss key was `train/loss` in 8.3 and is `train/cls_loss` in 8.4+.
+_CLASSIFY_METRIC_KEYS: dict[str, tuple[str, ...]] = {
+    "loss": ("train/loss", "train/cls_loss"),
+    "top1": ("metrics/accuracy_top1",),
+    "top5": ("metrics/accuracy_top5",),
+}
 
-def _extract_metrics(metrics_dict: dict) -> dict[str, float | None]:
+
+def _extract_metrics(
+    metrics_dict: dict, *, task: str
+) -> dict[str, float | None]:
     """Map Ultralytics' metric names → our stable wire keys."""
+    key_map = (
+        _CLASSIFY_METRIC_KEYS if task == "classify" else _DETECT_METRIC_KEYS
+    )
     out: dict[str, float | None] = {}
-    for our_key, candidates in _METRIC_KEYS.items():
+    for our_key, candidates in key_map.items():
         value: float | None = None
         for c in candidates:
             v = _safe_get(metrics_dict, c)
@@ -94,10 +108,34 @@ def _extract_metrics(metrics_dict: dict) -> dict[str, float | None]:
     return out
 
 
+def _resolve_data_arg(task: str, dataset_root: Path) -> str:
+    """Return the `data=` argument Ultralytics expects for `task`.
+
+    Detect: path to data.yaml (Roboflow / plain YOLO layout, validated by
+    the wizard's split helper).
+
+    Classify: path to the ImageFolder root containing `train/<class>/*`
+    and (recommended) `val/<class>/*`. Ultralytics 8.x accepts the root
+    directly — no data.yaml — and probes for `train/`, `val/`, `test/`.
+    """
+    if task == "classify":
+        return str(dataset_root)
+    data_yaml = dataset_root / "data.yaml"
+    if not data_yaml.is_file():
+        raise FileNotFoundError(f"data.yaml not found in {dataset_root}")
+    return str(data_yaml)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="VRL YOLO GUI — training runner")
-    parser.add_argument("--dataset", required=True, help="dataset root containing data.yaml")
+    parser.add_argument("--dataset", required=True, help="dataset root containing data.yaml or ImageFolder")
     parser.add_argument("--model", required=True, help="starting checkpoint .pt path or shorthand")
+    parser.add_argument(
+        "--task",
+        default="detect",
+        choices=("detect", "classify"),
+        help="Ultralytics task — drives the data= argument shape and metric keys.",
+    )
     parser.add_argument("--project", required=True, help="output root for Ultralytics")
     parser.add_argument("--name", required=True, help="run name (also our job_id)")
     parser.add_argument("--epochs", type=int, default=50)
@@ -111,15 +149,17 @@ def main() -> int:
     args = parser.parse_args()
 
     dataset_root = Path(args.dataset)
-    data_yaml = dataset_root / "data.yaml"
-    if not data_yaml.is_file():
-        _emit("error", message=f"data.yaml not found in {dataset_root}")
+    try:
+        data_arg = _resolve_data_arg(args.task, dataset_root)
+    except FileNotFoundError as exc:
+        _emit("error", message=str(exc))
         return 2
 
     _emit(
         "start",
         dataset=str(dataset_root),
         model=args.model,
+        task=args.task,
         epochs=args.epochs,
         imgsz=args.imgsz,
         batch=args.batch,
@@ -153,13 +193,13 @@ def main() -> int:
                 "epoch",
                 epoch=epoch_current,
                 epoch_total=int(args.epochs),
-                metrics=_extract_metrics(metrics_dict),
+                metrics=_extract_metrics(metrics_dict, task=args.task),
             )
 
         yolo.add_callback("on_fit_epoch_end", on_fit_epoch_end)
 
         results = yolo.train(
-            data=str(data_yaml),
+            data=data_arg,
             epochs=int(args.epochs),
             imgsz=int(args.imgsz),
             batch=int(args.batch),
@@ -182,7 +222,8 @@ def main() -> int:
         final_metrics: dict[str, float | None] = {}
         try:
             final_metrics = _extract_metrics(
-                dict(getattr(results, "results_dict", {}) or {})
+                dict(getattr(results, "results_dict", {}) or {}),
+                task=args.task,
             )
         except Exception:  # noqa: BLE001
             pass

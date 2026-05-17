@@ -250,17 +250,24 @@ class StartTrainingRequest(BaseModel):
 class TrainingMetrics(BaseModel):
     """Last-seen metrics from the training subprocess.
 
-    Fields default to None until at least one epoch finishes. mAP fields
-    populate only after the first validation pass (every epoch by
-    default; users can disable val by skipping the `val:` key in
-    data.yaml — but P4a's wizard makes that hard).
+    Fields default to None until at least one epoch finishes. The
+    detect-only fields (box/cls/dfl loss, mAP) and classify-only fields
+    (loss, top1, top5) coexist on the same model — the frontend reads
+    whichever subset matches `TrainingJobInfo.task`. Keeping them flat
+    avoids a discriminated-union schema and lets the snapshot layer
+    forward `to_json()` unchanged.
     """
 
+    # detect-only
     box_loss: float | None = None
     cls_loss: float | None = None
     dfl_loss: float | None = None
     mAP50: float | None = None
     mAP50_95: float | None = None
+    # classify-only
+    loss: float | None = None
+    top1: float | None = None
+    top5: float | None = None
 
 
 class TrainingJobInfo(BaseModel):
@@ -268,6 +275,7 @@ class TrainingJobInfo(BaseModel):
     status: TrainingStatus
     dataset_id: str
     model: str
+    task: Task
     epochs_total: int
     epoch_current: int = 0
     started_at: str  # ISO 8601 UTC

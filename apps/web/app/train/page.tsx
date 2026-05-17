@@ -39,8 +39,7 @@ const TASKS: TaskOption[] = [
     icon: Brain,
     description:
       "Per-image label (top-1 + top-5). Tumour subtype, Gleason grade, smear-pathology, marrow pattern.",
-    disabled: true,
-    badge: "P5",
+    disabled: false,
   },
 ];
 
@@ -90,18 +89,12 @@ export default function TrainPage() {
                 <CardDescription>{task.description}</CardDescription>
               </CardHeader>
               <CardContent>
-                {task.disabled ? (
-                  <p className="text-xs text-ink-muted">
-                    Coming in P5 — classification training reuses the same
-                    wizard but writes an ImageFolder dataset instead of YOLO
-                    labels.
-                  </p>
-                ) : (
-                  <p className="text-xs text-accent">
-                    <Sparkles className="mr-1 inline-block size-3" />
-                    Continue → drop your dataset folder next.
-                  </p>
-                )}
+                <p className="text-xs text-accent">
+                  <Sparkles className="mr-1 inline-block size-3" />
+                  {task.key === "classify"
+                    ? "Continue → drop your ImageFolder dataset (train/<class>/*)."
+                    : "Continue → drop your dataset folder next."}
+                </p>
               </CardContent>
             </Card>
           );

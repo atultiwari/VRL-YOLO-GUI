@@ -427,6 +427,18 @@ def _try_imagefolder(dataset_id: str, root: Path) -> DatasetInfo | None:
     if test_split is not None:
         splits.append(test_split)
 
+    warnings: list[str] = []
+    if val_split is None:
+        warnings.append(
+            "No val/ or valid/ split found — Ultralytics will fall back to "
+            "splitting train/ internally, but adding an explicit "
+            "val/<class>/*.jpg layout gives you stable top-1/top-5 metrics."
+        )
+    if len(class_dirs) < 2:
+        warnings.append(
+            "Only one class folder under train/ — classification needs at "
+            "least 2 classes to learn anything meaningful."
+        )
     return DatasetInfo(
         id=dataset_id,
         format="imagefolder",
@@ -435,11 +447,7 @@ def _try_imagefolder(dataset_id: str, root: Path) -> DatasetInfo | None:
         splits=tuple(splits),
         classes=tuple(sorted(class_counts.keys())),
         class_counts=class_counts,
-        warnings=(
-            "Classification training (Image Folder format) is implemented in P5 — "
-            "the dataset wizard recognises this layout but the configure page is "
-            "detection-only for now.",
-        ),
+        warnings=tuple(warnings),
     )
 
 

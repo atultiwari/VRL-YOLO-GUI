@@ -165,11 +165,16 @@ export type TrainingStatus =
   | "cancelled";
 
 export interface TrainingMetrics {
+  // detect-only
   box_loss: number | null;
   cls_loss: number | null;
   dfl_loss: number | null;
   mAP50: number | null;
   mAP50_95: number | null;
+  // classify-only
+  loss: number | null;
+  top1: number | null;
+  top5: number | null;
 }
 
 export interface TrainingJobInfo {
@@ -177,6 +182,7 @@ export interface TrainingJobInfo {
   status: TrainingStatus;
   dataset_id: string;
   model: string;
+  task: Task;
   epochs_total: number;
   epoch_current: number;
   started_at: string;
@@ -204,6 +210,7 @@ export type TrainingEvent =
       ts: number;
       dataset: string;
       model: string;
+      task: Task;
       epochs: number;
       imgsz: number;
       batch: number;

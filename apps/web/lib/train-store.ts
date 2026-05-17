@@ -20,13 +20,28 @@ export interface TrainHyperparams {
   batch_size: number;
 }
 
+/**
+ * Per-task preset defaults. Detect uses 640px (YOLO's standard input
+ * size for COCO-shaped data); classify uses 224px (matches ImageNet
+ * pretraining and what `yolo*-cls.pt` was distilled at). Epochs are the
+ * same across tasks — classification typically converges faster, but
+ * we'd rather let the user notice that and shorten the run themselves
+ * than risk under-training.
+ */
 export const PRESET_DEFAULTS: Record<
-  Exclude<TrainPreset, "custom">,
-  { epochs: number; image_size: number }
+  Task,
+  Record<Exclude<TrainPreset, "custom">, { epochs: number; image_size: number }>
 > = {
-  quick: { epochs: 5, image_size: 640 },
-  standard: { epochs: 50, image_size: 640 },
-  best: { epochs: 200, image_size: 640 },
+  detect: {
+    quick: { epochs: 5, image_size: 640 },
+    standard: { epochs: 50, image_size: 640 },
+    best: { epochs: 200, image_size: 640 },
+  },
+  classify: {
+    quick: { epochs: 5, image_size: 224 },
+    standard: { epochs: 50, image_size: 224 },
+    best: { epochs: 200, image_size: 224 },
+  },
 };
 
 interface TrainState {
@@ -51,8 +66,10 @@ interface TrainState {
 const DEFAULT_HYPERPARAMS: TrainHyperparams = {
   model: null,
   preset: "standard",
-  epochs: PRESET_DEFAULTS.standard.epochs,
-  image_size: PRESET_DEFAULTS.standard.image_size,
+  // Detect-default seed values. setTask() rewrites these for the
+  // chosen task before the user lands on /train/configure.
+  epochs: PRESET_DEFAULTS.detect.standard.epochs,
+  image_size: PRESET_DEFAULTS.detect.standard.image_size,
   // Filled in from /api/hardware on the configure page. 8 is a sane
   // localStorage-rehydration fallback (matches MPS default).
   batch_size: 8,
@@ -75,7 +92,30 @@ export const useTrainStore = create<TrainState>()(
       hyperparams: { ...DEFAULT_HYPERPARAMS },
       activeJobId: null,
 
-      setTask: (task) => set({ selectedTask: task }),
+      setTask: (task) =>
+        set((state) => {
+          // Re-seed epochs + imgsz from the new task's "standard" preset so
+          // switching detect → classify doesn't leave 640px from the old task
+          // staring at the user on the configure page.
+          if (task && state.selectedTask !== task) {
+            const presetForTask =
+              state.hyperparams.preset === "custom"
+                ? "standard"
+                : state.hyperparams.preset;
+            const defaults = PRESET_DEFAULTS[task][presetForTask];
+            return {
+              selectedTask: task,
+              hyperparams: {
+                ...state.hyperparams,
+                model: null,
+                preset: presetForTask,
+                epochs: defaults.epochs,
+                image_size: defaults.image_size,
+              },
+            };
+          }
+          return { selectedTask: task };
+        }),
       setDataset: (info) => set({ dataset: info }),
       patchHyperparams: (patch) =>
         set((state) => {
@@ -96,7 +136,9 @@ export const useTrainStore = create<TrainState>()(
           if (preset === "custom") {
             return { hyperparams: { ...state.hyperparams, preset } };
           }
-          const defaults = PRESET_DEFAULTS[preset];
+          // Per-task preset defaults — classify uses 224px not 640.
+          const task: Task = state.selectedTask ?? "detect";
+          const defaults = PRESET_DEFAULTS[task][preset];
           return {
             hyperparams: {
               ...state.hyperparams,

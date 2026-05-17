@@ -12,6 +12,31 @@ for the running tracker.
 
 ---
 
+## [0.8.0] — 2026-05-17 · P5: Train — Classification local run
+
+**Tag:** `v0.8-p5-train-classify`
+
+### Added
+- **Classification training is live.** The `/train` task picker no longer gates the Classification card behind "P5" — pick it, drop an ImageFolder (`train/<class>/*.jpg`, optionally with `val/<class>/*.jpg`), tune, hit Start, watch live top-1/top-5 accuracy curves alongside training loss, save the trained checkpoint into the model library, and run it on slide patches in `/predict`.
+- **Dataset wizard accepts ImageFolder for training.** The inspector already recognised it (warning copy aside); P5 wires Continue past the dataset page and adds a friendly warning when the user's selected task on `/train` doesn't match the layout they dropped (e.g. classify task + Roboflow YOLO folder).
+- **Configure page branches per task.** Classification filters the model picker to `*-cls` weights, swaps the image-size chip ladder to 96–384 (anchored at 224 — the size `yolo*-cls.pt` was distilled at), hides the YOLO class-name editor (ImageFolder dir names ARE the class names), and re-probes `/api/hardware` with `task=classify` for batch-size suggestions (classify head fits ~2× detect at the same VRAM).
+- **Live charts switch on the job's task.** Detection still draws box/cls/dfl loss + mAP50/mAP50-95; classification draws `train/loss` + validation top-1/top-5 accuracy on a 0..1 axis. `TrainingJobInfo.task` is the source of truth, so the chart re-renders correctly even after a refresh.
+- **Save-to-library routes per task.** A classify run's `best.pt` lands in `<storage_root>/models/classify/trained-<short_id>.pt`, the registry rescan picks it up, and the run page sets it as the new classify default so `/predict` is one click away.
+- Backend: `engine/train_runner.py` gained a `--task` arg + classify metric-key probes (`metrics/accuracy_top1`, `metrics/accuracy_top5`, `train/loss` with `train/cls_loss` fallback) and routes `data=` to the ImageFolder root for classify vs `data.yaml` for detect. `engine/training.py::JobManager.start()` now takes `task`, validates the dataset shape per task, persists `task` on `TrainingJob`, and `save_to_library()` routes by `job.task` instead of hard-coded detect. `TrainingMetrics` schema gains nullable `loss` / `top1` / `top5` fields that coexist with the detect-only fields.
+
+### Fixed
+- The dataset inspector's ImageFolder warning no longer parrots "classification is P5 — configure page is detection-only for now"; it now surfaces the actually-useful warnings (missing `val/` split, single-class dataset) and stays silent when the layout is clean.
+- The `/train` task picker's `disabled` flag and the configure page's hard-coded `task: "detect"` in the hardware-probe query key are both gone — selecting classify on `/train` now actually drives every downstream surface.
+- `/train/configure` re-seeds epochs + image_size from the new task's preset when the user switches detect ↔ classify, so 640px doesn't linger from a previous detect session into a classify run.
+
+### Known limitations (deferred)
+- Classification training reports `train/loss` as `null` on some Ultralytics 8.4+ builds where the value sits under `train/cls_loss` only after the validation pass. The chart connects across nulls; the dropped points are silent rather than crashing the stream.
+- Confusion matrix + per-class precision/recall reports for classify are P7-polish — the run page shows live top-1/top-5 but doesn't yet render a confusion grid at completion.
+- Multi-tenant training is still out of scope; one in-flight job per JobManager. A queued status flips straight to running on submit.
+- Colab tunnel handoff for classify (PLAN.md §11) lands in P6 alongside detect.
+
+---
+
 ## [0.7.1] — 2026-05-17 · P4b.fix-1: Models — Download + rename + ml-import safety net
 
 No tag — between-phase patch.

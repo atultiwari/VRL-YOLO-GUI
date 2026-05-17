@@ -17,7 +17,7 @@ background. Success = doctor installs one binary, drops a folder of slide
 patches, gets annotated images (detect) or a prediction table + PDF (classify)
 in under 10 minutes.
 
-**Status (v0.7.0, 2026-05-17):**
+**Status (v0.8.0, 2026-05-17):**
 - ✅ Pre — `CLAUDE.md` entry guide (`9bd0b83`)
 - ✅ **P0** — Scaffolding · `v0.1-p0-scaffolding` (`d06e9e2`)
 - ✅ **P1** — Predict (Detection) · `v0.2-p1-predict-detect` (`2acd8f5`)
@@ -30,8 +30,9 @@ in under 10 minutes.
 - ✅ **P4a** — Train (Detection) wizard · `v0.6-p4a-train-detect-wizard`
 - ✅ P4a.fix-1 — Roboflow upload + prepare-splits helper (`debf84b`)
 - ✅ **P4b** — Train (Detection) local run · `v0.7-p4b-train-detect-run` (`2e42d9d`) — live charts, cancel, save-to-library, class-name editor
-- ✅ P4b.fix-1 — Models download + rename + ml-import safety net
-- ⏳ **P5 next** — Train (Classification): wizard + subprocess + top-1/top-5 metric streams
+- ✅ P4b.fix-1 — Models download + rename + ml-import safety net (`2c0ced6`)
+- ✅ **P5** — Train (Classification) · `v0.8-p5-train-classify` — wizard + subprocess + top-1/top-5 metric streams, save-to-library routes per task
+- ⏳ **P6 next** — Train on Colab: Cloudflare tunnel + Drive sync + companion notebooks for both tasks
 
 **P3b also shipped three user-requested extras:**
 - Settings page (sidebar + localStorage hook)
@@ -207,25 +208,26 @@ VRL-YOLO-GUI/
 
 ## 8. Next concrete steps
 
-**P0 and P1 shipped.** Next phase is P2 — see
+**P0 → P5 shipped.** Next phase is **P6 — Train on Colab** — see
 [`docs/PHASE-STATUS.md`](docs/PHASE-STATUS.md) for the running tracker
 and per-phase verification proofs.
 
-**P2 scope (estimated 4 days):**
+**P6 scope (estimated 1.5 weeks):**
 
-1. `engine/inference.py` — add `_run_classify` branch returning
-   `{task:"classify", top1, top5, probs}` (no boxes).
-2. `routers/inference.py` — drop the "detect only" gate; dispatch on
-   `model.task` inside the engine.
-3. Frontend `/predict` — task-switch the view: classification hides the
-   SVG overlay and shows a top-5 bar chart + "below threshold → needs
-   review" flag.
-4. `scripts/fetch-models.py --task classify` — pulls
-   `yolo26{n,s}-cls.pt` and `yolov8{n,s}-cls.pt` into
-   `models/classify/`.
-5. End-of-phase tag: `v0.3-p2-predict-classify`.
+1. `engine/colab.py` — Cloudflare-tunnel client + Drive sync, modelled
+   on the `yolo-gui` reference project (PLAN.md §11).
+2. `/train/configure` — surface a "Run on Colab" toggle when the
+   accelerator probe returns `cpu`, instead of letting the user kick
+   off an overnight CPU run by accident.
+3. Companion notebooks under `notebooks/` (detect + classify pairs) —
+   train on the user's own Drive, mount Cloudflare tunnel, hand the live
+   metric stream back to the desktop app over the existing WebSocket
+   protocol so `/train/run` works unchanged.
+4. Save-to-library pulls `best.pt` from Drive into
+   `<storage_root>/models/<task>/`.
+5. End-of-phase tag: `v0.9-p6-train-colab`.
 
-Do not begin P2 (or any subsequent phase) without the user's explicit
+Do not begin P6 (or any subsequent phase) without the user's explicit
 sign-off — the workflow is phase-by-phase with a confirm-then-start
 check at each boundary.
 

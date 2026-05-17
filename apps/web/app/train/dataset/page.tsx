@@ -133,7 +133,10 @@ export default function DatasetWizardPage() {
           <p className="mt-3 max-w-2xl text-ink-muted">
             We&apos;ll auto-detect the format and report split counts, class
             list, and any warnings. Supported: Roboflow YOLO, plain YOLO,
-            COCO JSON, Pascal VOC.
+            COCO JSON, Pascal VOC, and ImageFolder
+            (<code className="rounded bg-surface-muted px-1 py-0.5 text-xs">
+              train/&lt;class&gt;/*.jpg
+            </code>) for classification.
           </p>
         </div>
         <Button variant="ghost" size="sm" onClick={() => router.push("/train")}>
@@ -157,6 +160,7 @@ export default function DatasetWizardPage() {
       ) : (
         <DatasetSummary
           dataset={dataset}
+          selectedTask={selectedTask}
           onReset={onReset}
           onContinue={() => router.push("/train/configure")}
           onDatasetChanged={setDataset}
@@ -270,9 +274,9 @@ function hasValidationSplit(dataset: DatasetInfo): boolean {
 }
 
 function needsSplitting(dataset: DatasetInfo): boolean {
-  // Only detection datasets pass through the wizard for training; classify
-  // skips this step (P5). For detect: surface a hint when there's no
-  // validation split, since `model.train()` won't compute mAP without one.
+  // Surface the splitter only for detect datasets — classify uses
+  // ImageFolder which has its own val/<class>/ convention, and our
+  // splitter rewrites data.yaml (irrelevant for classify).
   if (dataset.task !== "detect") return false;
   if (dataset.format === "unknown") return false;
   return !hasValidationSplit(dataset);
@@ -280,11 +284,13 @@ function needsSplitting(dataset: DatasetInfo): boolean {
 
 function DatasetSummary({
   dataset,
+  selectedTask,
   onReset,
   onContinue,
   onDatasetChanged,
 }: {
   dataset: DatasetInfo;
+  selectedTask: "detect" | "classify" | null;
   onReset: () => void;
   onContinue: () => void;
   onDatasetChanged: (next: DatasetInfo) => void;
@@ -295,6 +301,7 @@ function DatasetSummary({
   const isClassify = dataset.task === "classify";
   const formatTone = dataset.format === "unknown" ? "danger" : "clinical";
   const wantsSplit = needsSplitting(dataset);
+  const taskMismatch = selectedTask !== null && selectedTask !== dataset.task;
 
   return (
     <Card>
@@ -421,17 +428,18 @@ function DatasetSummary({
           ) : null}
           <Button
             className="flex-1"
-            disabled={isClassify || dataset.format === "unknown"}
+            disabled={taskMismatch || dataset.format === "unknown"}
             onClick={onContinue}
           >
             Continue → Configure <ArrowRight className="size-4" />
           </Button>
         </div>
-        {isClassify ? (
+        {taskMismatch ? (
           <p className="text-xs text-amber-900">
-            Classification training is P5. The wizard accepts ImageFolder
-            datasets so you can preview them, but the configure page is
-            detection-only for now.
+            You picked <b>{selectedTask}</b> on the previous step, but this
+            folder looks like a <b>{dataset.task}</b> dataset
+            ({FORMAT_LABELS[dataset.format]}). Go back and pick the matching
+            task — or upload a different folder.
           </p>
         ) : null}
       </CardContent>

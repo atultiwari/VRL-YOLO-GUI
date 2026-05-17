@@ -1,7 +1,7 @@
 # Phase Status
 
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones).
-> Updated at the end of each phase boundary. **Last edit: 2026-05-17.**
+> Updated at the end of each phase boundary. **Last edit: 2026-05-17 (P5 shipped).**
 
 ## Snapshot
 
@@ -20,14 +20,14 @@
 | P4a.fix-1 — Dataset upload + split helper | ✅ done | — | `debf84b` |
 | **P4b — Train (Detection) local run** | ✅ done | `v0.7-p4b-train-detect-run` | `2e42d9d` |
 | P4b.fix-1 — Models download + rename + ml-import safety net | ✅ done | — | `2c0ced6` |
-| P5 — Train (Classification) | ⏳ next | — | — |
-| P6 — Train on Colab | ⏳ pending | — | — |
+| **P5 — Train (Classification)** | ✅ done | `v0.8-p5-train-classify` | `0000000` |
+| P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at the P4b commit (`v0.7-p4b-train-detect-run`). **Next phase:** P5 — Train (Classification): same wizard pattern as P4a/P4b but for `task=classify` with ImageFolder layouts, top-1/top-5 metric streams, and per-class confidence summaries.
+**Current head:** `main` at the P5 commit (`v0.8-p5-train-classify`). **Next phase:** P6 — Train on Colab: bring the existing detect + classify training paths to a Google Colab runtime via Cloudflare tunnel + Drive sync (PLAN.md §11), so unaccelerated machines stop being a dead-end on `/train/configure`.
 
 ---
 
@@ -335,18 +335,71 @@ End-to-end smoke: 4-image dataset, 1 epoch, YOLO26n on Apple Silicon MPS, 30 s w
 - Classification training is still detection-only at the UI level; P5 adds the classify branch (`task=classify` ImageFolder + top-1 / top-5 metric streams).
 - Colab tunnel handoff (PLAN.md §11) lands in P4c — when no accelerator is detected, the wizard currently still lets you start a CPU run instead of suggesting Colab.
 
+### ✅ P5 — Train (Classification) · `v0.8-p5-train-classify`
+
+**Phase deliverable:** the same wizard the doctor used in P4a/P4b for detection now runs end-to-end for classification — drop an ImageFolder, watch live top-1 / top-5 accuracy curves alongside training loss, save the trained `.pt` into the model library, and run it on slide patches in `/predict`. Detection still works exactly as before.
+
+**Sub-phases:**
+
+| # | Subject | Outcome |
+|---|---|---|
+| P5.1 | Plan + survey | Read P4a/P4b code paths (`train_runner`, `training`, `train-store`, `/train`, `/train/configure`, `/train/run`, `save_to_library`); locked in additive shape (no detect regressions) and per-task UI branching. |
+| P5.2 | `engine/train_runner.py` classify branch | Added `--task` arg (default detect). Classify probes `metrics/accuracy_top1`, `metrics/accuracy_top5`, and `train/loss` (with `train/cls_loss` fallback for 8.4+). `_resolve_data_arg()` returns the dataset root for classify (Ultralytics' ImageFolder convention) instead of `data.yaml`. Existing detect path unchanged. |
+| P5.3 | `engine/training.py` + `routers/training.py` + `api/schemas.py` | `JobMetrics` gained nullable `loss` / `top1` / `top5`; `TrainingJob` gained `task`. `start()` accepts `task`, validates the dataset shape per task (data.yaml vs ImageFolder), and pre-creates `<output_dir>/<job_id>/`. `save_to_library()` routes by `job.task` (was hard-coded detect). The router dropped the "classify lands in P5" 400 gate, threads `task` from the registry, and `_job_to_info()` mirrors the snapshot's task. `TrainingMetrics` + `TrainingJobInfo` schemas mirror the new fields. |
+| P5.4 | Frontend types + train-store | `TrainingMetrics` gains classify fields; `TrainingJobInfo` carries `task`; `TrainingEvent.start` carries `task`. `PRESET_DEFAULTS` becomes `Record<Task, Record<Preset, …>>` so classify uses 224px instead of 640. `setTask()` re-seeds epochs + imgsz when the user switches detect ↔ classify. |
+| P5.5 | `/train` + `/train/dataset` | Classification card on `/train` is no longer disabled. The dataset summary's "P5 / detection-only" amber footer is gone; instead, Continue is blocked only on `selectedTask ≠ dataset.task` (with copy explaining the mismatch). ImageFolder inspector warnings rewritten to surface useful issues (missing val/, single-class). |
+| P5.6 | `/train/configure` | Model picker filters by `selectedTask`. ClassNamesEditor is detect-only (ImageFolder dir names ARE the classes). Image-size chips swap to classify ladder (96/128/160/192/224/256/288/320/384). Hardware probe re-fetches with `task=classify`. |
+| P5.7 | `/train/run` charts | Renders `ClassifyLossChart` + `ClassifyAccuracyChart` (top-1/top-5 on a 0..1 axis) when `snapshot.task === "classify"`; detection still shows the existing Loss + mAP charts. `formatMetrics()` extended to log classify keys. Save-to-library uses the model's reported task to set the right per-task default. |
+| P5.8 | End-to-end smoke | Built a 2-class (bus / zidane) × 8-image ImageFolder + matching val/ split. JobManager → train_runner → save_to_library completed in ~12 s on MPS; `top1=0.25 / top5=1.0` after 1 epoch; saved checkpoint landed at `<storage_root>/models/classify/trained-<short>.pt`; registry rescan recognised it as `task=classify` with the right class names. |
+
+**Verification:**
+
+```
+step: backend ready in ≈55 ms
+GET  /api/health                         → version 0.8.0
+POST /api/datasets/inspect (ImageFolder) → format=imagefolder, task=classify,
+                                            classes=[bus, zidane],
+                                            splits=[train(16), val(16)],
+                                            warnings=[]
+GET  /api/hardware?task=classify&imgsz=224
+                                         → MPS, suggested_batch_size=16
+POST /api/training/start (classify)      → 202 {job_id: "<uuid>"}
+GET  /api/training/{job_id}              → TrainingJobInfo with task=classify,
+                                            metrics{loss, top1, top5}
+WS   /api/training/{job_id}/stream       → hello → start(task=classify) →
+                                            epoch(top1=0.25, top5=1.0) →
+                                            complete → closed
+POST /api/training/{job_id}/save-to-library
+                                         → 200 ModelInfo {name: "trained-<short>.pt",
+                                                            source: "user",
+                                                            task: "classify"}
+GET  /api/models                         → trained classify checkpoint listed alongside
+                                            bundled yolo*-cls.pt weights
+pnpm type-check                          → clean
+pnpm build (desktop)                     → /train 3.23 kB · /train/configure 8.05 kB
+                                            /train/dataset 6.03 kB · /train/run 11.9 kB
+```
+
+End-to-end smoke: 16-image + 16-val ImageFolder, 1 epoch, YOLO26n-cls on Apple Silicon MPS, ~12 s wall-clock Start → Save-to-library.
+
+**Known limitations carried into P6:**
+- Classification training reports `train/loss` as `null` on some Ultralytics 8.4+ builds where the value sits under `train/cls_loss` only after the validation pass. The chart connects across nulls; the dropped points are silent rather than crashing the stream.
+- Confusion matrix + per-class precision/recall reports for classify are P7-polish — the run page shows live top-1/top-5 but doesn't yet render a confusion grid at completion.
+- Multi-tenant training is still out of scope; one in-flight job per JobManager.
+- Colab tunnel handoff for classify (PLAN.md §11) lands in P6 alongside detect.
+
 ---
 
-## Up next: P5 — Train (Classification)
+## Up next: P6 — Train on Colab
 
-**Estimated 4–5 days** per PLAN.md §14. Scope:
+**Estimated 1.5 weeks** per PLAN.md §14. Scope:
 
-- Detect classify task on `/train` task picker; classify branch in the dataset wizard accepts ImageFolder layouts.
-- `engine/training.py` already runs subprocesses for both tasks — the runner script needs a classify branch that emits `top1_accuracy` / `top5_accuracy` instead of mAPs.
-- `/train/run` chart switches axis labels + series for classify runs (read from the `TrainingJobInfo.task` field).
-- Save-to-library copies to `models/classify/trained-<short>.pt`.
+- New `engine/colab.py` — Cloudflare-tunnel client + Drive sync, modelled on the `yolo-gui` reference project.
+- `/train/configure` gains a "Run on Colab" toggle when no local accelerator is detected (instead of letting the user kick off an overnight CPU run by accident).
+- Companion notebooks under `notebooks/` (detect + classify pairs) train on the user's own Drive, mount Cloudflare tunnel, hand the live metric stream back to the desktop app over the existing WebSocket protocol so `/train/run` works unchanged.
+- Save-to-library pulls `best.pt` from Drive into `<storage_root>/models/<task>/`.
 
-**Phase tag at completion:** `v0.8-p5-train-classify`.
+**Phase tag at completion:** `v0.9-p6-train-colab`.
 
 ---
 

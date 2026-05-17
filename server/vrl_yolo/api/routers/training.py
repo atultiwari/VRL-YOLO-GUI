@@ -45,6 +45,7 @@ def _job_to_info(job: TrainingJob) -> TrainingJobInfo:
         status=snap["status"],
         dataset_id=snap["dataset_id"],
         model=snap["model"],
+        task=snap["task"],
         epochs_total=snap["epochs_total"],
         epoch_current=snap["epoch_current"],
         started_at=snap["started_at"],
@@ -92,14 +93,6 @@ def start_training(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"model {body.model!r} not found in registry",
         ) from exc
-    if model_record.task != "detect":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"{body.model!r} is a {model_record.task!r} model — "
-                "classification training lands in P5"
-            ),
-        )
 
     dataset_root = (
         manager.training_root.parent / "datasets" / body.dataset_id
@@ -114,6 +107,7 @@ def start_training(
         job = manager.start(
             dataset_root=dataset_root,
             model_path=str(model_record.path),
+            task=model_record.task,
             epochs=body.epochs,
             imgsz=body.imgsz,
             batch=body.batch,
@@ -160,10 +154,12 @@ def save_training_to_library(
     manager: JobManager = Depends(get_job_manager),
     registry: ModelRegistry = Depends(get_registry),
 ) -> ModelInfo:
-    """Copy the run's best.pt into `<storage_root>/models/detect/`.
+    """Copy the run's best.pt into `<storage_root>/models/<task>/`.
 
-    Returns the newly-registered ModelInfo so the frontend can navigate
-    straight to /predict with the trained model preselected.
+    Destination is `models/detect/` or `models/classify/` depending on
+    the job's task. Returns the newly-registered ModelInfo so the
+    frontend can navigate straight to /predict with the trained model
+    preselected.
     """
     try:
         dest = manager.save_to_library(job_id, registry=registry)

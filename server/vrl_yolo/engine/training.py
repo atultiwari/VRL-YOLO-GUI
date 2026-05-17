@@ -39,30 +39,48 @@ from vrl_yolo.engine.hardware import detect_accelerator
 from vrl_yolo.engine.registry import ModelRegistry
 
 JobStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
+JobTask = Literal["detect", "classify"]
+
+# Fields that flow through the metrics wire shape — kept as a single flat
+# dataclass so the existing TrainingMetrics schema stays one Pydantic model
+# rather than a discriminated union per task. None means "not applicable
+# to this task" OR "not produced yet this epoch"; the frontend reads
+# whichever subset matches the job's task.
+_METRIC_FIELDS: tuple[str, ...] = (
+    # detect-only
+    "box_loss",
+    "cls_loss",
+    "dfl_loss",
+    "mAP50",
+    "mAP50_95",
+    # classify-only
+    "loss",
+    "top1",
+    "top5",
+)
 
 
 @dataclass
 class JobMetrics:
+    # detect
     box_loss: float | None = None
     cls_loss: float | None = None
     dfl_loss: float | None = None
     mAP50: float | None = None
     mAP50_95: float | None = None
+    # classify
+    loss: float | None = None
+    top1: float | None = None
+    top5: float | None = None
 
     def update(self, raw: dict[str, float | None]) -> None:
-        for key in ("box_loss", "cls_loss", "dfl_loss", "mAP50", "mAP50_95"):
+        for key in _METRIC_FIELDS:
             v = raw.get(key)
             if v is not None:
                 setattr(self, key, v)
 
     def to_json(self) -> dict[str, float | None]:
-        return {
-            "box_loss": self.box_loss,
-            "cls_loss": self.cls_loss,
-            "dfl_loss": self.dfl_loss,
-            "mAP50": self.mAP50,
-            "mAP50_95": self.mAP50_95,
-        }
+        return {key: getattr(self, key) for key in _METRIC_FIELDS}
 
 
 @dataclass
@@ -70,6 +88,7 @@ class TrainingJob:
     job_id: str
     dataset_root: Path
     model: str
+    task: JobTask
     epochs_total: int
     imgsz: int
     batch: int
@@ -119,6 +138,7 @@ class TrainingJob:
                 "status": self.status,
                 "dataset_id": self.dataset_root.name,
                 "model": self.model,
+                "task": self.task,
                 "epochs_total": self.epochs_total,
                 "epoch_current": self.epoch_current,
                 "started_at": self.started_at.isoformat(),
@@ -170,6 +190,7 @@ class JobManager:
         *,
         dataset_root: Path,
         model_path: str,
+        task: JobTask,
         epochs: int,
         imgsz: int,
         batch: int,
@@ -180,13 +201,31 @@ class JobManager:
         absolute `.pt` path for bundled / user / trained models. Falling
         through to a bare name (e.g. `"yolo26n.pt"`) is also fine;
         Ultralytics auto-downloads it from the CDN.
+
+        `task` decides the shape Ultralytics expects in `data=`:
+        detect needs a `data.yaml` at the dataset root; classify points
+        at the ImageFolder root with `train/<class>/*`.
         """
         if not dataset_root.is_dir():
             raise FileNotFoundError(f"dataset root not found: {dataset_root}")
-        if not (dataset_root / "data.yaml").is_file():
-            raise ValueError(
-                f"dataset {dataset_root.name} has no data.yaml — split it first"
-            )
+        if task == "detect":
+            if not (dataset_root / "data.yaml").is_file():
+                raise ValueError(
+                    f"dataset {dataset_root.name} has no data.yaml — split it first"
+                )
+        elif task == "classify":
+            train_dir = dataset_root / "train"
+            if not train_dir.is_dir():
+                raise ValueError(
+                    f"dataset {dataset_root.name} has no train/ subdir — "
+                    "classify needs an ImageFolder layout (train/<class>/...)"
+                )
+            class_dirs = [p for p in train_dir.iterdir() if p.is_dir()]
+            if not class_dirs:
+                raise ValueError(
+                    f"dataset {dataset_root.name} has no class subdirectories "
+                    "under train/ — expected train/<class-name>/*.jpg"
+                )
 
         job_id = uuid.uuid4().hex
         output_dir = self._training_root / job_id
@@ -199,6 +238,7 @@ class JobManager:
             job_id=job_id,
             dataset_root=dataset_root,
             model=Path(model_path).name,
+            task=task,
             epochs_total=epochs,
             imgsz=imgsz,
             batch=batch,
@@ -216,6 +256,8 @@ class JobManager:
             str(dataset_root),
             "--model",
             str(model_path),
+            "--task",
+            task,
             "--project",
             str(self._training_root),
             "--name",
@@ -314,10 +356,10 @@ class JobManager:
                 "best.pt missing — was the training cancelled before the first save?"
             )
         # `registry._user_dir` is the canonical destination root; it's
-        # subdivided by task. We label trained checkpoints as `detect`
-        # for now since P4b is detect-only; classify lands in P5 with
-        # its own subprocess wrapper.
-        dest_dir = registry._user_dir / "detect"  # type: ignore[attr-defined]
+        # subdivided by task so trained detect checkpoints land in
+        # models/detect/ and trained classify checkpoints in
+        # models/classify/ — matching how the registry discovers them.
+        dest_dir = registry._user_dir / job.task  # type: ignore[attr-defined]
         dest_dir.mkdir(parents=True, exist_ok=True)
         # Suffix the model name with a short job stub for traceability.
         run_label = f"trained-{job_id[:8]}.pt"

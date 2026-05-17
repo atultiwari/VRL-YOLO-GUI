@@ -39,7 +39,13 @@ import { useTrainStore, type TrainPreset } from "@/lib/train-store";
 import type { DatasetInfo, HardwareInfo } from "@/lib/types";
 import { cn, formatBytes } from "@/lib/utils";
 
-const IMAGE_SIZES = [320, 416, 512, 608, 640, 768, 896, 1024, 1280];
+// Detect uses YOLO's 640px-centred ladder; classify is anchored at 224 (the
+// distillation size for `yolo*-cls.pt`) with neighbouring power-of-two-ish
+// sizes for users who want to push smaller / larger.
+const IMAGE_SIZES_BY_TASK: Record<"detect" | "classify", number[]> = {
+  detect: [320, 416, 512, 608, 640, 768, 896, 1024, 1280],
+  classify: [96, 128, 160, 192, 224, 256, 288, 320, 384],
+};
 
 const PRESET_CHOICES: { value: TrainPreset; label: string; description: string }[] = [
   {
@@ -101,9 +107,14 @@ export default function TrainConfigurePage() {
     refetchOnWindowFocus: false,
   });
 
+  // Default to detect when nothing is picked yet — selectedTask is non-null
+  // by the time we render (the redirect above bounces back to /train).
+  const taskForUi: "detect" | "classify" = selectedTask ?? "detect";
+
   const { data: hardware, isLoading: hwLoading } = useQuery({
-    queryKey: ["hardware", "detect", hyperparams.image_size],
-    queryFn: () => fetchHardware({ task: "detect", imgsz: hyperparams.image_size }),
+    queryKey: ["hardware", taskForUi, hyperparams.image_size],
+    queryFn: () =>
+      fetchHardware({ task: taskForUi, imgsz: hyperparams.image_size }),
     staleTime: 60_000,
   });
 
@@ -111,18 +122,18 @@ export default function TrainConfigurePage() {
     queryKey: ["models"],
     queryFn: fetchModels,
   });
-  const detectModels = useMemo(
-    () => modelsData?.models.filter((m) => m.task === "detect") ?? [],
-    [modelsData],
+  const taskModels = useMemo(
+    () => modelsData?.models.filter((m) => m.task === taskForUi) ?? [],
+    [modelsData, taskForUi],
   );
 
   // Pick a default model the first time we land — prefer the saved
-  // detect default, else the first detect model in the registry.
+  // per-task default, else the first model in the registry for that task.
   useEffect(() => {
-    if (hyperparams.model || detectModels.length === 0) return;
-    const def = modelsData?.defaults.detect ?? detectModels[0]?.name;
+    if (hyperparams.model || taskModels.length === 0) return;
+    const def = modelsData?.defaults[taskForUi] ?? taskModels[0]?.name;
     if (def) patchHyperparams({ model: def });
-  }, [hyperparams.model, detectModels, modelsData, patchHyperparams]);
+  }, [hyperparams.model, taskModels, modelsData, taskForUi, patchHyperparams]);
 
   // Adopt the hardware suggestion the FIRST time we have one. Once the
   // user moves the slider, the store flips preset to "custom" and we
@@ -135,7 +146,7 @@ export default function TrainConfigurePage() {
     patchHyperparams({ batch_size: hardware.suggested_batch_size, preset: hyperparams.preset });
   }, [hardware, hyperparams.preset, hyperparams.batch_size, patchHyperparams]);
 
-  const modelOptions = detectModels.map((m) => ({
+  const modelOptions = taskModels.map((m) => ({
     value: m.name,
     label: `${m.name}  ·  ${m.num_classes} cls  ·  ${formatBytes(m.size_mb)}`,
   }));
@@ -194,7 +205,9 @@ export default function TrainConfigurePage() {
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
         <div className="space-y-4">
-          <ClassNamesEditor dataset={dataset} onDatasetChanged={setDataset} />
+          {taskForUi === "detect" ? (
+            <ClassNamesEditor dataset={dataset} onDatasetChanged={setDataset} />
+          ) : null}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -212,7 +225,11 @@ export default function TrainConfigurePage() {
                 options={modelOptions}
                 onChange={(v) => patchHyperparams({ model: v })}
                 placeholder={modelsLoading ? "Loading…" : "Pick a model"}
-                emptyText="No detection models — run scripts/fetch-models.py --task detect"
+                emptyText={
+                  taskForUi === "classify"
+                    ? "No classification models — run scripts/fetch-models.py --task classify"
+                    : "No detection models — run scripts/fetch-models.py --task detect"
+                }
               />
               <div>
                 <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-muted">
@@ -265,6 +282,7 @@ export default function TrainConfigurePage() {
                 hint="Single pass over the training set per epoch."
               />
               <ImageSizeSelect
+                task={taskForUi}
                 value={hyperparams.image_size}
                 onChange={(v) => patchHyperparams({ image_size: v })}
               />
@@ -357,19 +375,26 @@ function DatasetSummary({ dataset }: { dataset: DatasetInfo }) {
 }
 
 function ImageSizeSelect({
+  task,
   value,
   onChange,
 }: {
+  task: "detect" | "classify";
   value: number;
   onChange: (next: number) => void;
 }) {
+  const sizes = IMAGE_SIZES_BY_TASK[task];
+  const hint =
+    task === "classify"
+      ? "Patches are resized to this on every side. 224 matches the size yolo*-cls.pt was distilled at; larger sizes can help when the diagnostic features are very fine."
+      : "Patches are resized to this on every side. 640 is YOLO's default; higher = more memory, slightly slower, marginally better small-object recall.";
   return (
     <div className="flex flex-col gap-1.5">
       <label className="text-xs font-medium uppercase tracking-wide text-ink-muted">
         Image size
       </label>
       <div className="flex flex-wrap gap-1.5">
-        {IMAGE_SIZES.map((sz) => {
+        {sizes.map((sz) => {
           const isActive = sz === value;
           return (
             <button
@@ -388,10 +413,7 @@ function ImageSizeSelect({
           );
         })}
       </div>
-      <span className="text-xs text-ink-muted">
-        Patches are resized to this on every side. 640 is YOLO&apos;s default;
-        higher = more memory, slightly slower, marginally better small-object recall.
-      </span>
+      <span className="text-xs text-ink-muted">{hint}</span>
     </div>
   );
 }
