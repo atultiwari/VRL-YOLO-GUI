@@ -219,11 +219,19 @@ class ModelRegistry:
         ultralytics' YOLO loader is the only reliable way to read the
         embedded task tag; the raw torch.load surface changed between
         v8.4 patches.
-        """
-        from ultralytics import YOLO
 
+        ImportError from a missing `ml` extra is surfaced as a
+        `ModelLoadError` so the registry can degrade gracefully: a fresh
+        clone with only the desktop extras installed still serves
+        `/api/models` (just with an empty list) instead of returning 500.
+        """
         try:
+            from ultralytics import YOLO
             yolo = YOLO(str(path))
+        except ImportError as exc:
+            raise ModelLoadError(
+                f"ultralytics not installed — `uv sync --extra ml` to enable model loading ({exc})"
+            ) from exc
         except Exception as exc:  # noqa: BLE001 — surface as a registry-level error
             raise ModelLoadError(f"could not load {path.name}: {exc}") from exc
 
