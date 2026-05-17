@@ -207,6 +207,18 @@ def _setup_frozen_logging() -> Path | None:
         return None
 
 
+def _resolve_bundled_models() -> Path:
+    """Locate the bundled `models/` directory — source layout (dev) or
+    PyInstaller bundle.
+    """
+    bundled = getattr(sys, "_MEIPASS", None)
+    if bundled:
+        candidate = Path(bundled) / "models"
+        if candidate.is_dir():
+            return candidate
+    return ROOT / "models"
+
+
 def _build_settings():
     from vrl_yolo.config import Settings  # noqa: E402
 
@@ -216,6 +228,7 @@ def _build_settings():
         mode="desktop",
         storage_path=storage_root,
         static_frontend_path=_resolve_static_frontend(),
+        bundled_models_path=_resolve_bundled_models(),
         max_upload_mb=500,
     )
 

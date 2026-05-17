@@ -27,6 +27,18 @@ def resolve_storage_root() -> Path:
     return Path(xdg) / "vrl-yolo-gui"
 
 
+def resolve_bundled_models_dir(project_root: Path | None = None) -> Path:
+    """Locate the bundled `models/` directory — both dev and PyInstaller layouts."""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidate = Path(meipass) / "models"
+        if candidate.is_dir():
+            return candidate
+    if project_root is not None:
+        return project_root / "models"
+    return Path(__file__).resolve().parent.parent.parent / "models"
+
+
 def user_models_dir(storage_root: Path | None = None) -> Path:
     """Directory holding user-imported and locally-trained .pt files."""
     root = storage_root or resolve_storage_root()

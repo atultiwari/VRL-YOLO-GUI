@@ -1,0 +1,41 @@
+export type Task = "detect" | "classify";
+
+export type ModelSource = "bundled" | "user" | "trained";
+
+export interface ModelInfo {
+  name: string;
+  task: Task;
+  source: ModelSource;
+  num_classes: number;
+  classes: Record<string, string>;
+  params: number;
+  size_mb: number;
+}
+
+export interface ModelsListResponse {
+  models: ModelInfo[];
+  defaults: Partial<Record<Task, string>>;
+}
+
+export interface Accelerator {
+  kind: "cuda" | "mps" | "cpu";
+  name: string;
+}
+
+export interface DetectionBox {
+  class_id: number;
+  class_name: string;
+  conf: number;
+  xyxy: [number, number, number, number];
+  xywhn: [number, number, number, number];
+}
+
+export interface DetectionResponse {
+  task: "detect";
+  model: string;
+  image_size: [number, number];
+  accelerator: Accelerator;
+  inference_ms: number;
+  boxes: DetectionBox[];
+  counts_per_class: Record<string, number>;
+}

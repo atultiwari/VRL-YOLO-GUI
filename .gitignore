@@ -24,7 +24,8 @@ MANIFEST
 venv/
 env/
 ENV/
-.python-version
+# Note: .python-version IS tracked — see commit pinning Python to 3.11 so
+# dev and CI converge on the same interpreter. Don't add it back here.
 
 # Testing / coverage
 .pytest_cache/
