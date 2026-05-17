@@ -11,7 +11,7 @@
 | **P0 — Scaffolding** | ✅ done | `v0.1-p0-scaffolding` | `d06e9e2` |
 | **P1 — Predict (Detection)** | ✅ done | `v0.2-p1-predict-detect` | `2acd8f5` |
 | P1.fix-1 — Cold-start race fix | ✅ done | — | `427093d` |
-| **P2 — Predict (Classification)** | ✅ done | `v0.3-p2-predict-classify` | TBD |
+| **P2 — Predict (Classification)** | ✅ done | `v0.3-p2-predict-classify` | `455efc8` |
 | P3a — Predict v1: batch + presets | ⏳ next | — | — |
 | P3b — Predict v1: reports + import | ⏳ pending | — | — |
 | P4a — Train (Detection) wizard | ⏳ pending | — | — |

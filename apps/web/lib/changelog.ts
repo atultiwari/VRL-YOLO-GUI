@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P2",
     title: "Predict — Classification",
     tag: "v0.3-p2-predict-classify",
-    commit: "TBD",
+    commit: "455efc8",
     date: "2026-05-17",
     status: "current",
     features: [
