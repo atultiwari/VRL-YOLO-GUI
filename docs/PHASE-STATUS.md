@@ -2,6 +2,10 @@
 
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones).
 > Updated at the end of each phase boundary. **Last edit: 2026-05-18 (P5.fix-4 — subprocess env-var dispatch).**
+>
+> **Known limitations and deferred work** live in
+> [`docs/CARRY-FORWARDS.md`](CARRY-FORWARDS.md) — full diagnoses + fix
+> options for each item, organised for cold-pickup in a future session.
 
 ## Snapshot
 

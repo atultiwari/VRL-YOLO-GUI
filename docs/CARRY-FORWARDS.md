@@ -1,0 +1,376 @@
+# Carry-forwards
+
+> Known limitations / deferred work that's been deliberately not fixed in
+> shipped versions. Each item is a real gap, not a bug we don't know about.
+> Sorted by likelihood of hitting in real use, not by complexity.
+>
+> **Last edit: 2026-05-18 (after v0.8.4 / P5.fix-4).**
+
+Each entry is self-contained so a future session can pick it up cold without
+re-reading the whole P5 fix chain.
+
+---
+
+## 1. Graceful job-group SIGTERM on Cmd+Q
+
+| | |
+|---|---|
+| **Status** | Open, deferred |
+| **First flagged** | v0.8.1 / P5.fix-1 (re-flagged in fix-2, fix-3, fix-4) |
+| **Severity** | Medium — user-visible "training silently keeps running after I quit" |
+| **Blocks pilot?** | Recommend fixing before pilot users hit it |
+
+### What's happening today
+
+When the user hits **Cmd+Q** while a training run is in progress, the app
+exits *immediately* via `os._exit(0)` — that's the macOS shutdown
+workaround we shipped in P5.fix-2 to prevent the
+`QSurface::~QSurface` → `QThreadStorageData::get` static-destructor crash.
+
+The training subprocess (running Ultralytics under `train_runner.py`) is a
+**child** of the main app process. When the parent dies abruptly via
+`os._exit` without sending a termination signal, macOS's `launchd` adopts
+the orphaned child and it keeps running silently in the background until
+it finishes all its epochs.
+
+### Concrete impact
+
+- CPU / RAM / MPS keep getting consumed by the orphaned training run, with
+  no visible UI. On a long run (200 epochs, large dataset) that's hours of
+  unattended work the user thought they cancelled.
+- The `best.pt` file still gets written to disk on completion, but the
+  `JobManager` that knew about that run is dead — so there's no
+  "Save to library" prompt, and `/predict` doesn't see the trained model
+  unless the user re-launches the app and manually imports it via the
+  `/models` Import button.
+- Quietly confusing if the user pressed Cmd+Q *because* the run was taking
+  too long: it doesn't actually cancel the training, it just hides the UI.
+
+### Why deferred
+
+The strict goal of P5.fix-1 / fix-2 was "Cmd+Q doesn't crash." Adding
+"and also cancel any running training first" is a separate concern that
+needs its own thinking — what timeout do we wait? Do we hard-exit anyway
+if SIGTERM doesn't take? Do we ask the user "training is in progress —
+really quit?" before exiting?
+
+### Reference code
+
+- `src-pyloid/main.py::_install_macos_shutdown_workaround` — the
+  `QEvent::Close` filter that calls `_macos_hard_exit("QEvent.Close
+  intercepted")`. This is where the SIGTERM-and-wait would go, *before*
+  the `os._exit(0)`.
+- `server/vrl_yolo/engine/training.py::JobManager.cancel` — already
+  knows how to send `SIGTERM` to a single job's process group on POSIX
+  (and `CTRL_BREAK_EVENT` on Windows). Just needs a new `cancel_all_and_wait`
+  caller.
+- `server/vrl_yolo/engine/training.py::JobManager.list_jobs` — returns
+  all current jobs; we'd filter to `status in {"queued", "running"}`.
+
+### Options for fixing
+
+**Option A: Best-effort silent cancel (simplest).** Before `os._exit(0)`,
+walk active jobs and SIGTERM each one. Wait up to ~3 seconds total for
+exits, then hard-exit regardless. User sees nothing different at quit
+time except their training actually stops.
+
+```python
+def _hard_exit_with_job_cleanup(reason: str, job_manager) -> None:
+    active = [j for j in job_manager.list_jobs()
+              if j.snapshot()["status"] in {"queued", "running"}]
+    for job in active:
+        job_manager.cancel(job.job_id)
+    # Brief wait for SIGTERM to take.
+    deadline = time.time() + 3.0
+    while time.time() < deadline:
+        if all(j.snapshot()["status"] not in {"queued", "running"}
+               for j in active):
+            break
+        time.sleep(0.1)
+    _macos_hard_exit(reason)
+```
+
+Wiring: `_install_macos_shutdown_workaround` needs to take the
+JobManager (or fish it off `app.state.job_manager` at hook time).
+
+**Option B: Confirmation prompt.** Show a native QMessageBox "Training is
+in progress — quit anyway?" before exiting. More UX-correct but adds
+another modal interaction at quit time, which may itself complicate the
+close cascade (we're inside the `QEvent::Close` filter — modal dialogs
+during event filtering are dicey).
+
+**Option C: Persist job state to disk, allow re-attaching on next launch.**
+Heaviest. JobManager state would survive app restarts, the UI could
+show "There's a training run from your last session — view it?" Lots of
+plumbing; only worth it if pilot users repeatedly say "I wish I could
+quit and come back later."
+
+### Decision points (answer before implementing)
+
+1. **Cancel silently or prompt?** Option A vs Option B. Pilot UX preference.
+2. **Cancel timeout** — 3s? 5s? Long enough for Ultralytics to flush
+   `best.pt`, short enough that the user doesn't think the Cmd+Q is broken.
+3. **Hard-exit if cancel hangs?** Almost certainly yes — the close crash
+   we were preventing in the first place is worse than an orphaned process.
+
+### Recommended path
+
+Option A. Smallest change, covers the actual reported problem, no UX
+ambiguity. Revisit Option C if pilot feedback asks for "resume training
+after quit."
+
+---
+
+## 2. `python-pyloid-desktop-packaging` skill needs corrections
+
+| | |
+|---|---|
+| **Status** | Open, deferred |
+| **First flagged** | v0.8.1 / P5.fix-1; corrected in fix-2 but skill not updated |
+| **Severity** | Low for this project, high for any *future* Pyloid project |
+| **Blocks pilot?** | No |
+
+### What's happening today
+
+The skill at `~/.claude/skills/python-pyloid-desktop-packaging/SKILL.md`
+is the reference doc I (Claude) loaded at the start of P0 to set up
+VRL-YOLO-GUI's packaging. Two pieces of advice in it are now provably
+wrong on macOS 26.x with Pyloid 0.27 + PySide6 6.9:
+
+**Wrong claim #1:** "Hook `QCoreApplication::aboutToQuit` and call
+`os._exit(0)` to bypass the static-destructor crash. `aboutToQuit` is
+emitted synchronously inside `QCoreApplication::quit()`."
+
+That's what v0.8.0 shipped. Cmd+Q still crashed because Pyloid's
+`BrowserWindow.closeEvent` calls `QCoreApplication.quit()`, which on
+macOS routes back through `libqcocoa` and re-enters
+`[NSApplication terminate:]` recursively. That second terminate proceeds
+straight to `libc exit()` without unwinding back to
+`QCoreApplication::exec()`'s cleanup — which is the only place that
+actually emits `aboutToQuit`. The hook never runs.
+
+**Missing warning #2:** the skill doesn't warn against installing an
+event filter on `QApplication` when `QWebEngineView` is in play. I tried
+exactly that in v0.8.1 as "the obvious next step." It silently crashed
+startup with `PySide::typeName(QObject const*)` dereferencing null inside
+`QObjectWrapper::eventFilter` — because PySide6 6.9 can't always resolve
+the Python wrapper for events flowing from internal C++ objects during
+QWebEngineView construction.
+
+### Concrete impact for THIS project
+
+Zero. VRL-YOLO-GUI's `src-pyloid/main.py` already has the correct fix
+(window-scoped `QEvent::Close` filter on the underlying QMainWindow,
+plus `aboutToQuit` as a fallback). v0.8.4 ships and works.
+
+### Concrete impact for OTHER projects
+
+The next time anyone (me, Atul, or another Claude Code user) builds a
+Pyloid + QtWebEngine desktop app and consults the skill, they'll fall
+into both traps in sequence:
+
+1. Read skill, implement `aboutToQuit` hook, ship.
+2. App crashes on Cmd+Q. "But I followed the skill!"
+3. Implement app-wide `QEvent::Quit` filter as the obvious next step.
+4. App now crashes at *startup* — silently, no log trace beyond "Pyloid
+   window created, then nothing."
+5. Re-do the full P5.fix-1 → fix-2 diagnosis-and-recovery dance.
+
+### Why deferred
+
+Pure shared-infrastructure polish. Updating the skill doesn't make the
+VRL-YOLO-GUI `.dmg` any better. The right time is when there's a quiet
+moment between project phases.
+
+### Reference code (the correct pattern, for skill examples)
+
+- `src-pyloid/main.py::_install_macos_shutdown_workaround(window)` —
+  takes the Pyloid window, walks `window._window._window` up to four
+  nested `_window` attributes to find the underlying `QMainWindow`,
+  installs a `QEvent::Close` filter on THAT object, keeps the
+  `aboutToQuit` connection as a fallback.
+- `src-pyloid/main.py::_maybe_install_auto_quit_for_test` — env-gated
+  test hook (`VRL_YOLO_GUI_TEST_AUTO_QUIT_S=N`) that lets the close
+  path be exercised on a headless dev machine. Worth promoting as a
+  pattern in the skill so other projects can verify their workaround
+  without needing a real Cmd+Q event.
+
+### Options for updating the skill
+
+**Option A: In-place corrections.** Edit the existing
+"macOS quit-time crash" section to (a) describe the re-entrant-terminate
+path, (b) replace the `aboutToQuit`-only example with the window-scoped
+filter pattern, (c) add a clear "DO NOT install event filters on
+QApplication when QWebEngineView is present" warning citing the
+`PySide::typeName` crash signature, (d) reference VRL-YOLO-GUI as the
+reference implementation. ~60 lines of skill edits.
+
+**Option B: Promote VRL-YOLO-GUI to "reference implementation" status.**
+Same as Option A but also reorganise the skill so the quit-handling
+section pulls its example *directly* from VRL-YOLO-GUI rather than
+inlining it. Slightly more durable — if the pattern evolves again,
+only the project needs updating, not the skill.
+
+**Option C: Bundle the env-gated test hook into the skill's
+"verification" guidance.** Currently the skill's verification step is
+"repeatedly Cmd+Q the app and watch DiagnosticReports." With
+`VRL_YOLO_GUI_TEST_AUTO_QUIT_S` (or skill-equivalent
+`<APP>_TEST_AUTO_QUIT_S`), verification becomes scriptable and CI-able.
+
+### Decision points
+
+1. **Edit in place or restructure?** Option A is fastest; Option B is
+   more durable. Probably A unless the skill needs other restructuring
+   anyway.
+2. **Generalize VRL-YOLO-GUI's window-walk?** Pyloid's
+   `window._window._window` nesting is project-specific naming, but
+   the 4-deep walk pattern is general — worth promoting.
+
+### Recommended path
+
+Option A. Get the warnings into the skill so the next project doesn't
+repeat the same diagnostic loop. Promote VRL-YOLO-GUI's
+`_maybe_install_auto_quit_for_test` pattern as the verification helper.
+
+---
+
+## 3. Splitter is all-or-nothing
+
+| | |
+|---|---|
+| **Status** | Open, deferred |
+| **First flagged** | v0.8.3 / P5.fix-3 |
+| **Severity** | Low — only affects users with curated splits |
+| **Blocks pilot?** | Probably not, but worth confirming with pilot users |
+
+### What's happening today
+
+When the user clicks **Prepare splits…** in `/train/dataset` (either for
+detect via `split_dataset` or classify via `split_imagefolder`), the
+backend:
+
+1. Collects **every image** from wherever it currently sits — flat at
+   root, in `train/`, in `val/`, in `test/`, anywhere.
+2. Shuffles them with the seed.
+3. Redistributes per the new ratios.
+
+This intentionally throws away any pre-existing split decisions. The
+docstring of `split_imagefolder` says so explicitly:
+
+> "The splitter doesn't care if a dataset was previously split unevenly;
+> it re-shuffles from scratch using the seed."
+
+### Concrete impact
+
+**Scenario A: hand-curated val sets.** A pathologist intentionally placed
+the hardest mitosis cases in `val/` so the model gets evaluated on the
+cases they care about most. They click Prepare splits to re-stage a
+flat dataset into the Ultralytics-ready shape. Their curated val gets
+re-shuffled randomly. Quality of evaluation degrades silently.
+
+**Scenario B: add-a-test-split.** A user has a Roboflow export with
+`train/` + `valid/` but no `test/`. They want to JUST generate a test
+split without touching the curated train/valid distribution. They can't —
+clicking Prepare splits reshuffles all three.
+
+**Scenario C: idempotency confusion.** A user splits 80/10/10, runs
+training, then opens Prepare splits again to check the ratios. The
+slider reads 80/10/10 (correct) but clicking "Split & re-inspect"
+re-shuffles the dataset, changing which images are in val. The seed
+makes this deterministic but not obvious — same seed gives the same
+shuffle, but if the source data has changed at all (e.g. user dropped
+in a few new images via re-upload) the shuffle differs.
+
+### Why deferred
+
+The primary use case is "user drops a flat folder, splits aren't right,
+generate them." Preserving curated splits is a power-user / clinical-
+research edge case. For a v1 clinical pilot it's almost certainly fine —
+most pathologists will drop a folder and let the splitter decide.
+Revisit if pilot feedback says otherwise.
+
+### Reference code
+
+- `server/vrl_yolo/engine/dataset.py::split_dataset` — detect splitter.
+  Walks `_find_image_label_pairs` to collect everything, shuffles,
+  redistributes.
+- `server/vrl_yolo/engine/dataset.py::split_imagefolder` — classify
+  splitter. Walks `_collect_imagefolder_images` (which explicitly looks
+  in both flat AND split locations), stratifies per class, redistributes.
+- `apps/web/app/train/dataset/page.tsx::SplitModal` — the UI. Currently
+  has no "preserve existing splits" option.
+
+### Options for fixing
+
+**Option A: "Preserve existing splits" toggle.** Add a checkbox to the
+modal (default off — "regenerate from scratch"). When on, the backend
+detects which images already live in train/val/test, keeps those
+assignments, and only redistributes images that are unassigned (e.g.
+in the flat `<class>/` dirs or in a new upload).
+
+```
+[ ] Preserve existing splits — only assign new / un-classified images
+```
+
+Backend: `split_dataset(..., preserve_existing=True)` — a flag that
+makes the splitter skip images already in a split dir, distribute only
+the rest.
+
+**Option B: Refuse to re-split.** If `train/` (and any of `val/`,
+`valid/`, `test/`) already exist, refuse to split with a clear error:
+"This dataset already has splits. Delete them first (or click Reset)
+if you want to regenerate." Forces the user to make the decision
+explicitly.
+
+**Option C: Surface the seed prominently.** Don't change behaviour;
+just make it more obvious that re-clicking with the same seed gives the
+same split. Cheapest "fix"; doesn't help users with curated splits.
+
+**Option D: Diff-aware splitting.** If pre-existing splits sum to 100%
+of the source images, preserve them entirely (no-op). If new images
+have been added, distribute only the new ones. Most "magic" but also
+most surprising — fails closed differently depending on user state.
+
+### Decision points
+
+1. **Default behaviour:** preserve-on or preserve-off? Affects what
+   happens to existing users when this lands.
+2. **Surface in UI:** checkbox in modal, or warning before Split &
+   re-inspect button activates?
+3. **Detect-side parity:** the same option needs to make sense for both
+   classify (`<class>/` dirs) and detect (`images/`+`labels/` pairs).
+   Detect's split is more complex because images can be split without
+   labels and vice versa.
+
+### Recommended path
+
+Option A with checkbox default OFF (current behaviour is the default).
+Power users who care about preserving curated splits opt in. Simplest
+backward-compatible change.
+
+---
+
+## When to revisit
+
+- **After tomorrow's thorough testing** of v0.8.4: if anything in the
+  testing exposes orphan-on-quit symptoms, item #1 jumps to "blocking."
+- **Before P6 (Train on Colab) starts**: the skill update (#2) is worth
+  doing first since P6 will also lean on Pyloid + QtWebEngine packaging.
+- **During pilot prep**: revisit splitter behaviour (#3) once we know
+  what shape pilots' datasets actually arrive in.
+
+## How to add new carry-forwards
+
+When a P-phase or fix lands and we deliberately defer something:
+
+1. Add a short note in the `Known limitations (deferred)` section of
+   the matching `apps/web/lib/changelog.ts` entry and `CHANGELOG.md`.
+2. Add a one-line bullet in the `Carried-forward` section of the
+   matching `docs/PHASE-STATUS.md` phase block.
+3. **Add a full section here** with the same structure as items 1-3
+   above (status table, what's happening, concrete impact, why deferred,
+   reference code, options, decision points, recommended path).
+
+That third step is what makes the deferral actionable later — bullets
+in PHASE-STATUS rot fast and don't give a future session enough to act
+on without re-deriving the whole problem.

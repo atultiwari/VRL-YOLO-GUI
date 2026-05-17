@@ -48,9 +48,10 @@ in under 10 minutes.
 Live status snapshot is in [`docs/PHASE-STATUS.md`](docs/PHASE-STATUS.md);
 per-build feature list is in [`CHANGELOG.md`](CHANGELOG.md) (also surfaced
 in the app at `/changelog`); the canonical roadmap stays in
-[`PLAN.md`](PLAN.md). The user works phase-by-phase and expects a commit
-+ push at each phase boundary; do **not** roll multiple phases into one
-commit.
+[`PLAN.md`](PLAN.md); **deferred work / known limitations** with full
+diagnoses live in [`docs/CARRY-FORWARDS.md`](docs/CARRY-FORWARDS.md). The
+user works phase-by-phase and expects a commit + push at each phase
+boundary; do **not** roll multiple phases into one commit.
 
 **On every phase commit, also:**
 1. Bump `pyproject.toml` `version` so `/api/health` advertises it.
