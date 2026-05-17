@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P5.fix-3",
     title: "Flat ImageFolder support + Prepare splits for classify + layout examples",
     tag: "v0.8.3",
-    commit: "0000000",
+    commit: "72dc1db",
     date: "2026-05-18",
     status: "current",
     features: [

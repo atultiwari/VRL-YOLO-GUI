@@ -23,7 +23,7 @@
 | **P5 — Train (Classification)** | ✅ done | `v0.8-p5-train-classify` | `1d104f7` |
 | P5.fix-1 — macOS Cmd+Q event-filter shutdown (regressed startup; superseded by P5.fix-2) | ⚠️ superseded | `v0.8.1` | `543b40d` |
 | P5.fix-2 — Window-scoped close filter | ✅ done | `v0.8.2` | `5bc93cc` |
-| P5.fix-3 — Flat ImageFolder + classify splitter + layout examples | ✅ done | `v0.8.3` | `0000000` |
+| P5.fix-3 — Flat ImageFolder + classify splitter + layout examples | ✅ done | `v0.8.3` | `72dc1db` |
 | P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
@@ -460,7 +460,7 @@ step: QEvent.Close intercepted — bypassing static-destructor crash via os._exi
 - The 4-deep `_window` walk is a band-aid for Pyloid's internal nesting depth. If a future Pyloid release changes that, the launch.log prints `macOS shutdown workaround skipped — could not locate underlying QMainWindow on 'BrowserWindow'` and the old crash returns. Worth a heads-up before any Pyloid bump.
 - Upstream `python-pyloid-desktop-packaging` skill now needs TWO updates: (a) `aboutToQuit` alone is insufficient on macOS 26.x with Pyloid 0.27, (b) NEVER install an event filter on QApplication when QWebEngineView is in play — use a window-scoped filter instead.
 
-### ✅ P5.fix-3 — Flat ImageFolder + classify splitter + layout examples · `v0.8.3` · `0000000`
+### ✅ P5.fix-3 — Flat ImageFolder + classify splitter + layout examples · `v0.8.3` · `72dc1db`
 
 **Trigger:** the first real classification dataset (a 3-class lung-pathology subset at `/Users/atultiwari/Downloads/Projects/Datasets/lung_colon_image_set/lung_partial`) failed to import. The folder structure was `lung_partial/{lung_aca,lung_n,lung_scc}/*.jpeg` — class subfolders directly under the root, no `train/` wrapper. v0.8.0–v0.8.2's inspector required the `train/<class>/*` layout exclusively, so the flat layout fell through to "Unknown layout" and the Continue button was permanently gated off.
 
