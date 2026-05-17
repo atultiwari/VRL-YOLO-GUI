@@ -1,7 +1,7 @@
 # Phase Status
 
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones).
-> Updated at the end of each phase boundary. **Last edit: 2026-05-17 (P5.fix-1 — macOS Cmd+Q crash).**
+> Updated at the end of each phase boundary. **Last edit: 2026-05-17 (P5.fix-2 — window-scoped close filter).**
 
 ## Snapshot
 
@@ -21,7 +21,8 @@
 | **P4b — Train (Detection) local run** | ✅ done | `v0.7-p4b-train-detect-run` | `2e42d9d` |
 | P4b.fix-1 — Models download + rename + ml-import safety net | ✅ done | — | `2c0ced6` |
 | **P5 — Train (Classification)** | ✅ done | `v0.8-p5-train-classify` | `1d104f7` |
-| P5.fix-1 — macOS Cmd+Q event-filter shutdown | ✅ done | `v0.8.1` | `543b40d` |
+| P5.fix-1 — macOS Cmd+Q event-filter shutdown (regressed startup; superseded by P5.fix-2) | ⚠️ superseded | `v0.8.1` | `543b40d` |
+| P5.fix-2 — Window-scoped close filter | ✅ done | `v0.8.2` | `0000000` |
 | P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
@@ -389,7 +390,7 @@ End-to-end smoke: 16-image + 16-val ImageFolder, 1 epoch, YOLO26n-cls on Apple S
 - Multi-tenant training is still out of scope; one in-flight job per JobManager.
 - Colab tunnel handoff for classify (PLAN.md §11) lands in P6 alongside detect.
 
-### ✅ P5.fix-1 — macOS Cmd+Q event-filter shutdown · `v0.8.1` · `543b40d`
+### ⚠️ P5.fix-1 — macOS Cmd+Q event-filter shutdown · `v0.8.1` · `543b40d` (superseded by P5.fix-2)
 
 **Trigger:** v0.7.1 (and v0.8.0) crashed on Cmd+Q with `EXC_BAD_ACCESS / KERN_INVALID_ADDRESS at 0x0` in `QSurface::~QSurface` → `QOpenGLContext::currentContext()` → `QThreadStorageData::get()`, deep inside `__cxa_finalize_ranges` triggered by `-[NSApplication terminate:]`. Frame-for-frame identical to the documented crash in [`python-pyloid-desktop-packaging` skill §macOS quit-time crash](file:///Users/atultiwari/.claude/skills/python-pyloid-desktop-packaging/SKILL.md).
 
@@ -415,6 +416,48 @@ End-to-end smoke: 16-image + 16-val ImageFolder, 1 epoch, YOLO26n-cls on Apple S
 **Carried-forward:**
 - In-flight training subprocess does not receive a SIGTERM before the parent exits via `os._exit(0)` — the child is reparented to launchd and runs to completion or is reaped by the OS. Plumbing a graceful job-group shutdown before the hard exit lands in a follow-up.
 - The upstream `python-pyloid-desktop-packaging` skill should be updated to reflect the re-entrant-terminate path observed here so other Pyloid projects don't repeat the same incomplete workaround.
+
+**Regression:** the binary built from this fix booted (download handler ran, Pyloid logged "Icon is not set."), then exited silently before reaching `pyloid.run()`. Diagnosed and replaced in P5.fix-2 below.
+
+### ✅ P5.fix-2 — Window-scoped close filter · `v0.8.2` · `0000000`
+
+**Trigger:** v0.8.1 (P5.fix-1) made the app worse — it stopped reaching `pyloid.run()` at all on macOS, exiting silently between `pyloid.create_window` and the main loop.
+
+**Diagnosis (local repro, no GitHub Actions needed):**
+
+1. Tail of `~/Library/Application Support/VRL-YOLO-GUI/logs/launch.log` from the v0.8.1 binary showed three back-to-back launches all ending at the same point — after `step: download handler installed (...)` and Pyloid's `Icon is not set.` print, but BEFORE `step: pyloid.run() — entering main loop`. The v0.7.1 launch on the same machine printed the next two lines. Code-diff between the two builds was scoped to the new `_install_macos_shutdown_workaround()`.
+2. Reproduced the silent exit in dev with `PYTHONUNBUFFERED=1 uv run --extra ml --extra desktop python -u src-pyloid/main.py`. Same launch.log tail. Crash was not in the bundling layer.
+3. Bisected by commenting out the single `app.installEventFilter(...)` line while keeping every other change. Startup recovered immediately. The QApplication-wide event filter was the cause.
+4. A `python3.11-*.ips` crash report from the pre-bisect run pinpointed the actual fault: `PySide::typeName(QObject const*) + 36` deref'd null inside `QObjectWrapper::eventFilter` → `sendThroughApplicationEventFilters`. PySide6 6.9 can't always resolve the Python wrapper for events flowing through app-wide filters during QWebEngineView construction, and a missing wrapper segfaults inside Shiboken.
+
+**Fix:** scope the filter to the actual `QMainWindow` instead of the QApplication.
+
+| # | Subject | Outcome |
+|---|---|---|
+| P5.fix-2.1 | Replace app-wide `QEvent::Quit` filter with window-scoped `QEvent::Close` filter | `_install_macos_shutdown_workaround(window)` now takes the Pyloid window, walks `window._window._window` up to four nested `_window` attributes looking for the real `QMainWindow`, and installs a `QObject` event filter on THAT object. Catches `QEvent::Close` (arrives at the QMainWindow during `tryCloseAllWidgetWindows`, before Pyloid's `closeEvent` runs) and `os._exit(0)`s — same close-cascade interception as fix-1, without app-wide event flow. Keeps the `aboutToQuit` fallback. Added defensive launch.log prints at every step so a future Pyloid version that reshapes the wrapper is one log-tail away. |
+| P5.fix-2.2 | Env-gated auto-quit test hook | Added `_maybe_install_auto_quit_for_test()` — when `VRL_YOLO_GUI_TEST_AUTO_QUIT_S=N` is set, schedules a `QApplication.quit()` N seconds after the main loop starts. Lets the close path be exercised in dev without sending real Cmd+Q. No-op when env var unset; ships in the binary so clinicians filing a close bug can be asked to run with it set. |
+
+**Verification (local dev):**
+
+```
+$ PYTHONUNBUFFERED=1 VRL_YOLO_GUI_TEST_AUTO_QUIT_S=4 uv run --extra ml --extra desktop python -u src-pyloid/main.py
+step: import pyloid
+...
+step: construct Pyloid window
+step: download handler installed (Downloads dir: /Users/atultiwari/Downloads)
+Icon is not set.
+step: macOS shutdown workaround installed (QEvent::Close filter on QMainWindow + aboutToQuit fallback)
+step: TEST auto-quit scheduled in 4.0s via QApplication.quit()
+step: pyloid.run() — entering main loop
+step: TEST timer fired — calling QApplication.quit()
+step: QEvent.Close intercepted — bypassing static-destructor crash via os._exit
+# process exits cleanly; no new crash report in ~/Library/Logs/DiagnosticReports/
+```
+
+**Carried-forward:**
+- Same as P5.fix-1: in-flight training subprocess does not receive a SIGTERM before `os._exit(0)`. Follow-up.
+- The 4-deep `_window` walk is a band-aid for Pyloid's internal nesting depth. If a future Pyloid release changes that, the launch.log prints `macOS shutdown workaround skipped — could not locate underlying QMainWindow on 'BrowserWindow'` and the old crash returns. Worth a heads-up before any Pyloid bump.
+- Upstream `python-pyloid-desktop-packaging` skill now needs TWO updates: (a) `aboutToQuit` alone is insufficient on macOS 26.x with Pyloid 0.27, (b) NEVER install an event filter on QApplication when QWebEngineView is in play — use a window-scoped filter instead.
 
 ---
 

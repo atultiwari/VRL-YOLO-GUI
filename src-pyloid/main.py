@@ -126,7 +126,23 @@ class _PyiSplash:
 _quit_event_filter = None
 
 
-def _install_macos_shutdown_workaround() -> None:
+def _macos_hard_exit(reason: str) -> None:
+    """Flush stdio, log why we're exiting, then bypass static destructors.
+
+    Direct call to `os._exit` instead of `sys.exit` so we skip both
+    Python's atexit handlers AND C++ static destructors — the latter
+    is the whole point of the macOS shutdown workaround.
+    """
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    print(f"step: {reason} — bypassing static-destructor crash via os._exit")
+    os._exit(0)
+
+
+def _install_macos_shutdown_workaround(window) -> None:  # noqa: ANN001 — pyloid window
     """Skip the Qt 6 + QtWebEngine static-destructor crash on macOS quit.
 
     Symptom: `EXC_BAD_ACCESS (SIGSEGV) / KERN_INVALID_ADDRESS at 0x0` when
@@ -149,61 +165,140 @@ def _install_macos_shutdown_workaround() -> None:
     `QThreadStorage` whose static destructor has already run, and the
     process aborts on a null deref.
 
-    Fix: intercept ONE level earlier than `aboutToQuit`. A
-    `QApplication`-level event filter catches `QEvent::Quit` before
-    QApplication::event hands it to `tryCloseAllWidgetWindows`. By
-    `os._exit(0)`-ing right there, we never run any closeEvent, never
-    re-enter terminate, never reach the static-destructor chain. The
-    line-buffered launch.log captures the intercept print before the
-    process is reaped.
+    Fix: install a `QEvent::Close` event filter scoped to the Pyloid
+    window's underlying QMainWindow (NOT the QApplication). That close
+    event fires immediately before Pyloid's `closeEvent` runs — same
+    moment in the cascade, but the filter never sees the unrelated
+    events that QWebEngineView / QQuickWidget exchange during
+    construction. Catching it here and `os._exit(0)`-ing means we
+    never run Pyloid's closeEvent, never call `QCoreApplication.quit()`,
+    never re-enter terminate, never reach `__cxa_finalize_ranges`.
 
     We also keep an `aboutToQuit` fallback for code paths that DO
     unwind through `exec()` (e.g. a SIGTERM signal handler that calls
     `app.quit()` from a normal context) — that hook costs nothing
     extra when the event-filter intercept fires first.
 
-    NB: the parent `python-pyloid-desktop-packaging` skill historically
-    documented `aboutToQuit` alone as sufficient. v0.8.0 shipped that
-    version; v0.7.1 crashed on Cmd+Q despite the hook being installed,
-    because of the re-entrant terminate path described above. The skill
-    should be updated separately to reflect this.
+    NB: an earlier attempt installed the filter on `QApplication` to
+    catch `QEvent::Quit` instead. That filter sees every event for
+    every object, and broke Pyloid's QWebEngineView construction
+    (window never finished initialising; process exited silently
+    between create_window and pyloid.run). Window-scoped filtering
+    sidesteps that entirely.
+
+    NB2: the parent `python-pyloid-desktop-packaging` skill historically
+    documented `aboutToQuit` alone as sufficient. That hook doesn't fire
+    on the Cmd+Q path because of the re-entrant terminate described
+    above. The skill should be updated separately to reflect both that
+    finding and the QApplication-event-filter trap.
     """
     if sys.platform != "darwin":
         return
     try:
         from PySide6.QtCore import QEvent, QObject, Qt
-        from PySide6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication, QMainWindow
     except ImportError:
         return
 
     app = QApplication.instance()
     if app is None:
+        print("step: macOS shutdown workaround skipped — no QApplication instance")
         return
 
-    def _hard_exit(reason: str) -> None:
-        try:
-            sys.stdout.flush()
-            sys.stderr.flush()
-        except Exception:  # noqa: BLE001
-            pass
-        print(f"step: {reason} — bypassing static-destructor crash via os._exit")
-        os._exit(0)
+    # Resolve `QEvent::Close` once at install time. Use both the explicit
+    # enum and the legacy attribute so we don't fail per-event if a
+    # future PySide6 reorganises these.
+    close_type = getattr(getattr(QEvent, "Type", QEvent), "Close", None)
+    if close_type is None:
+        print("step: macOS shutdown workaround skipped — QEvent.Close not resolvable")
+        return
 
-    class _QuitEventFilter(QObject):
+    # Pyloid wraps the underlying QMainWindow at `window._window._window`
+    # on 0.27: the outer object is a `BrowserWindow` Python wrapper, the
+    # inner `_window` is a `_BrowserWindow` Python facade, and ITS
+    # `_window` is the actual QMainWindow. Walk up to three nested
+    # `_window` attributes looking for one that is_a QMainWindow — that
+    # tolerates the wrapper shifting one level deeper or shallower across
+    # Pyloid releases without us guessing field names.
+    qmain = None
+    candidate = window
+    for _ in range(4):
+        if isinstance(candidate, QMainWindow):
+            qmain = candidate
+            break
+        candidate = getattr(candidate, "_window", None)
+        if candidate is None:
+            break
+    if qmain is None:
+        print(
+            "step: macOS shutdown workaround skipped — could not locate underlying "
+            f"QMainWindow on {type(window).__name__!r}"
+        )
+        return
+
+    class _CloseEventFilter(QObject):
+        def __init__(self) -> None:
+            super().__init__()
+
         def eventFilter(self, _obj, event) -> bool:  # noqa: ANN001 — Qt signature
-            if event.type() == QEvent.Type.Quit:
-                _hard_exit("QEvent.Quit intercepted")
-            # Never actually reached when intercepting — os._exit doesn't return.
+            try:
+                if event.type() == close_type:
+                    _macos_hard_exit("QEvent.Close intercepted")
+            except Exception as exc:  # noqa: BLE001 — never crash event dispatch
+                print(f"step: closeEvent filter error (non-fatal): {exc}")
             return False
 
     global _quit_event_filter
-    _quit_event_filter = _QuitEventFilter()
-    app.installEventFilter(_quit_event_filter)
+    _quit_event_filter = _CloseEventFilter()
+    qmain.installEventFilter(_quit_event_filter)
+    print(
+        "step: macOS shutdown workaround installed "
+        f"(QEvent::Close filter on {type(qmain).__name__} + aboutToQuit fallback)"
+    )
 
     app.aboutToQuit.connect(
-        lambda: _hard_exit("aboutToQuit fallback"),
+        lambda: _macos_hard_exit("aboutToQuit fallback"),
         type=Qt.ConnectionType.DirectConnection,
     )
+
+
+def _maybe_install_auto_quit_for_test() -> None:
+    """Test-only: trigger a graceful Cmd+Q-equivalent after N seconds.
+
+    Set `VRL_YOLO_GUI_TEST_AUTO_QUIT_S=3` in the environment to schedule
+    a `QApplication.quit()` call N seconds after the main loop starts —
+    useful for verifying the macOS shutdown workaround on a headless dev
+    machine where you can't actually hit Cmd+Q. Unset / removed in
+    production runs.
+    """
+    raw = os.environ.get("VRL_YOLO_GUI_TEST_AUTO_QUIT_S")
+    if not raw:
+        return
+    try:
+        delay_s = float(raw)
+    except ValueError:
+        return
+    try:
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QApplication
+    except ImportError:
+        return
+    app = QApplication.instance()
+    if app is None:
+        return
+    delay_ms = max(0, int(delay_s * 1000))
+    print(f"step: TEST auto-quit scheduled in {delay_s}s via QApplication.quit()")
+    # Use a fresh QTimer (not singleShot static) so we keep a Python
+    # reference and Qt doesn't GC the connection mid-flight.
+    timer = QTimer()
+    timer.setSingleShot(True)
+    timer.timeout.connect(lambda: (print("step: TEST timer fired — calling QApplication.quit()"), app.quit()))
+    timer.start(delay_ms)
+    global _test_auto_quit_timer
+    _test_auto_quit_timer = timer
+
+
+_test_auto_quit_timer = None
 
 
 def _install_download_handler() -> None:
@@ -425,7 +520,6 @@ def main() -> int:
     print("step: construct Pyloid window")
     pyloid = Pyloid(app_name="VRL-YOLO-GUI", single_instance=True)
 
-    _install_macos_shutdown_workaround()
     _install_download_handler()
 
     window = pyloid.create_window(
@@ -434,6 +528,14 @@ def main() -> int:
         height=900,
     )
     window.load_url(f"http://127.0.0.1:{port}")
+
+    # MUST run after create_window: the filter is scoped to the window's
+    # underlying QMainWindow, which doesn't exist until create_window
+    # returns. An earlier attempt installed an app-wide QEvent::Quit
+    # filter before the window was built; it broke QWebEngineView
+    # construction and the app exited silently before pyloid.run().
+    _install_macos_shutdown_workaround(window)
+    _maybe_install_auto_quit_for_test()
 
     splash.close_after(window)
     window.show_and_focus()
