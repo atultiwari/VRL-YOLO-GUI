@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P3b.fix-1",
     title: "Predict — Downloads fix",
     tag: null,
-    commit: "TBD",
+    commit: "cd1a92b",
     date: "2026-05-17",
     status: "current",
     features: [],

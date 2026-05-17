@@ -15,7 +15,7 @@
 | Topbar fix — live version | ✅ done | — | `e62d8d2` |
 | **P3a — Predict v1: batch + presets** | ✅ done | `v0.4-p3a-predict-batch` | `84dc3f8` |
 | **P3b — Predict v1: reports, import & settings** | ✅ done | `v0.5-p3b-predict-reports` | `0d05150` |
-| P3b.fix-1 — QtWebEngine downloads | ✅ done | — | TBD |
+| P3b.fix-1 — QtWebEngine downloads | ✅ done | — | `cd1a92b` |
 | P4a — Train (Detection) wizard | ⏳ next | — | — |
 | P4b — Train (Detection) local run | ⏳ pending | — | — |
 | P5 — Train (Classification) | ⏳ pending | — | — |
