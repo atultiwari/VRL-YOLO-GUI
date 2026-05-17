@@ -5,9 +5,17 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 
-from vrl_yolo.api.schemas import DatasetInfoOut, DatasetSplitOut
+from vrl_yolo.api.schemas import (
+    DatasetInfoOut,
+    DatasetSplitOut,
+    SplitDatasetRequest,
+)
 from vrl_yolo.config import Settings
-from vrl_yolo.engine.dataset import inspect_dataset, write_uploaded_dataset
+from vrl_yolo.engine.dataset import (
+    inspect_dataset,
+    split_dataset,
+    write_uploaded_dataset,
+)
 from vrl_yolo.paths import resolve_storage_root
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -85,15 +93,15 @@ async def inspect_uploaded_dataset(
     return _to_out(info)
 
 
-@router.get("/{dataset_id}", response_model=DatasetInfoOut)
-def get_dataset(dataset_id: str, settings: Settings = Depends(_settings)) -> DatasetInfoOut:
-    """Re-fetch a previously-inspected dataset by id.
+def _resolve_dataset_root(
+    dataset_id: str, settings: Settings
+) -> Path:
+    """Look up a dataset's on-disk root, 404 if missing.
 
-    The configure page calls this on mount so a page reload (or
-    deep-linking from the changelog "open this run" flow in P4b)
-    rehydrates from disk instead of forcing a re-upload.
+    Shared between the GET / split routes. Reject anything that doesn't
+    look like our uuid hex up front — keeps shell-style filenames out
+    of the path join.
     """
-    # Reject anything that doesn't look like the uuid hex we minted.
     if not (dataset_id.isalnum() and 8 <= len(dataset_id) <= 64):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="malformed dataset id"
@@ -104,5 +112,56 @@ def get_dataset(dataset_id: str, settings: Settings = Depends(_settings)) -> Dat
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"dataset {dataset_id!r} not found on disk",
         )
+    return root
+
+
+@router.post("/{dataset_id}/split", response_model=DatasetInfoOut)
+def split_dataset_endpoint(
+    dataset_id: str,
+    body: SplitDatasetRequest,
+    settings: Settings = Depends(_settings),
+) -> DatasetInfoOut:
+    """Reorganise the on-disk dataset into train/valid/test splits.
+
+    Destructive within the dataset's own directory: the existing
+    `train/`, `valid/`, `test/`, `images/`, `labels/` trees are wiped
+    after their contents are staged. data.yaml is rewritten with the
+    new split paths (preserving the user's `names`). The dataset's
+    UUID stays the same so the configure-page store doesn't lose track.
+
+    Ratios must sum to 1.0 (±0.001). Test ratio may be 0 — the route
+    will skip writing a `test/` directory in that case.
+    """
+    root = _resolve_dataset_root(dataset_id, settings)
+    try:
+        info = split_dataset(
+            root,
+            train_ratio=body.train_ratio,
+            valid_ratio=body.valid_ratio,
+            test_ratio=body.test_ratio,
+            seed=body.seed,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return _to_out(info)
+
+
+@router.get("/{dataset_id}", response_model=DatasetInfoOut)
+def get_dataset(dataset_id: str, settings: Settings = Depends(_settings)) -> DatasetInfoOut:
+    """Re-fetch a previously-inspected dataset by id.
+
+    The configure page calls this on mount so a page reload (or
+    deep-linking from the changelog "open this run" flow in P4b)
+    rehydrates from disk instead of forcing a re-upload.
+    """
+    root = _resolve_dataset_root(dataset_id, settings)
     info = inspect_dataset(root)
     return _to_out(info)

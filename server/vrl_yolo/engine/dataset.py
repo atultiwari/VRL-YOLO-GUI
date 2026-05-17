@@ -30,6 +30,7 @@ and displayed but the configure page disables it.
 from __future__ import annotations
 
 import json
+import random
 import shutil
 import uuid
 from collections import Counter
@@ -476,6 +477,302 @@ def _yolo_splits(root: Path) -> tuple[DatasetSplit, ...]:
         )
         out.append(DatasetSplit(name, image_count, label_count))
     return tuple(out)
+
+
+# --- Split / prepare ---------------------------------------------------
+
+
+# Files the splitter must NOT delete during cleanup, even when they
+# don't carry an image+label pair. data.yaml is rewritten at the end of
+# split_dataset(); the rest are user-facing docs / metadata.
+_PRESERVED_ROOT_FILES: frozenset[str] = frozenset({
+    "data.yaml",
+    "data.yml",
+    "README.roboflow.txt",
+    "README.md",
+    "README.txt",
+    "LICENSE",
+    "NOTICE",
+})
+
+_STAGING_DIR_NAME = "__vrl-split-staging__"
+
+
+def _find_image_label_pairs(root: Path) -> list[tuple[Path, Path | None]]:
+    """Collect every image in the dataset and pair it with its YOLO label.
+
+    YOLO's convention is that labels live in a sibling `labels/` directory
+    named after the image's `images/` directory (e.g. `train/images/x.jpg`
+    pairs with `train/labels/x.txt`). We look up the obvious places, in
+    order:
+
+    1. Same parent (`<dir>/x.jpg` ↔ `<dir>/x.txt`).
+    2. Sibling `labels/` of an `images/` directory (the YOLO standard).
+    3. A `labels/` directory under root (covers flat plain-YOLO layouts).
+
+    Images that don't pair with any label are still returned (with
+    `None`) so the caller can warn / decide what to do. Splitter
+    currently moves the image without a label; YOLO treats those as
+    background.
+    """
+    pairs: list[tuple[Path, Path | None]] = []
+    for img in sorted(root.rglob("*")):
+        if not img.is_file() or img.suffix.lower() not in _IMAGE_EXT:
+            continue
+        # Skip files inside our own staging directory if it lingers
+        # from a crashed previous run.
+        if _STAGING_DIR_NAME in img.parts:
+            continue
+
+        stem = img.stem
+        # 1. Same-dir sibling .txt
+        candidate = img.with_suffix(".txt")
+        if candidate.is_file():
+            pairs.append((img, candidate))
+            continue
+        # 2. Sibling `labels/` next to the image's `images/` dir
+        if img.parent.name == "images":
+            candidate = img.parent.parent / "labels" / f"{stem}.txt"
+            if candidate.is_file():
+                pairs.append((img, candidate))
+                continue
+        # 3. labels/ at root
+        candidate = root / "labels" / f"{stem}.txt"
+        if candidate.is_file():
+            pairs.append((img, candidate))
+            continue
+        pairs.append((img, None))
+    return pairs
+
+
+def _infer_class_names_from_labels(
+    pairs: Iterable[tuple[Path, Path | None]],
+) -> list[str]:
+    """Walk YOLO label files, infer placeholder class names from indices.
+
+    Used only when the dataset has no `data.yaml` (plain YOLO). Each
+    label file's first column is the class id; we scan all of them to
+    find the max id and emit `class_0`...`class_N` placeholders. The
+    user can rename them on the configure page (lands in P4b).
+    """
+    max_id = -1
+    for _, lbl in pairs:
+        if lbl is None:
+            continue
+        try:
+            for line in lbl.read_text().splitlines():
+                parts = line.strip().split()
+                if not parts:
+                    continue
+                try:
+                    cls_id = int(parts[0])
+                except ValueError:
+                    continue
+                if cls_id > max_id:
+                    max_id = cls_id
+        except OSError:
+            continue
+    if max_id < 0:
+        return []
+    return [f"class_{i}" for i in range(max_id + 1)]
+
+
+def _read_existing_class_names(root: Path) -> list[str]:
+    """Pull `names:` out of data.yaml if it exists.
+
+    Supports both list (`names: [a, b, c]`) and dict (`names: {0: a, 1: b}`)
+    forms — Roboflow ships either depending on version.
+    """
+    for filename in ("data.yaml", "data.yml"):
+        path = root / filename
+        if not path.is_file():
+            continue
+        try:
+            data = yaml.safe_load(path.read_text()) or {}
+        except (yaml.YAMLError, OSError):
+            continue
+        names = data.get("names")
+        if isinstance(names, list):
+            return [str(n) for n in names]
+        if isinstance(names, dict):
+            try:
+                return [
+                    str(v)
+                    for _, v in sorted(names.items(), key=lambda kv: int(kv[0]))
+                ]
+            except (TypeError, ValueError):
+                continue
+    return []
+
+
+def split_dataset(
+    dataset_root: Path,
+    *,
+    train_ratio: float,
+    valid_ratio: float,
+    test_ratio: float,
+    seed: int = 42,
+) -> DatasetInfo:
+    """Reorganise a YOLO-shaped dataset into clean train / valid / test splits.
+
+    Works for three input shapes — handled identically, since we just
+    flatten everything into `(image, label)` pairs and re-distribute:
+
+    - Plain YOLO at root (`images/`+`labels/` + optional `data.yaml`).
+    - Roboflow YOLO with only `train/` (the case that motivated this).
+    - Roboflow YOLO with all three splits — re-splits using fresh ratios.
+
+    The operation is **destructive** within `dataset_root`: old
+    `train/`, `valid/`, `test/`, `images/`, `labels/` directories are
+    wiped after the pairs are staged. Preserved root files (data.yaml,
+    READMEs, LICENSE) stay untouched. data.yaml is rewritten at the end
+    with the new split paths and the class names inherited from the old
+    yaml (or inferred from label indices when no yaml existed).
+
+    Stages files inside `<root>/__vrl-split-staging__/` for the duration
+    of the move so a partial run never leaves the dataset half-split. On
+    failure, the staging dir is removed and the original layout is left
+    untouched.
+    """
+    if not dataset_root.is_dir():
+        raise FileNotFoundError(dataset_root)
+
+    total = train_ratio + valid_ratio + test_ratio
+    if abs(total - 1.0) > 1e-3:
+        raise ValueError(f"ratios must sum to 1.0; got {total:.3f}")
+    if train_ratio <= 0:
+        raise ValueError("train_ratio must be > 0")
+    for name, r in (
+        ("train_ratio", train_ratio),
+        ("valid_ratio", valid_ratio),
+        ("test_ratio", test_ratio),
+    ):
+        if r < 0 or r > 1:
+            raise ValueError(f"{name} must be in [0, 1]; got {r}")
+
+    pairs = _find_image_label_pairs(dataset_root)
+    if not pairs:
+        raise ValueError("no images found — nothing to split")
+    paired = sum(1 for _, lbl in pairs if lbl is not None)
+    if paired == 0:
+        raise ValueError(
+            "no image+label pairs found — every image must have a matching .txt"
+        )
+
+    class_names = _read_existing_class_names(dataset_root)
+    if not class_names:
+        class_names = _infer_class_names_from_labels(pairs)
+
+    # Shuffle by seed for reproducible splits.
+    rng = random.Random(seed)
+    shuffled = list(pairs)
+    rng.shuffle(shuffled)
+
+    n = len(shuffled)
+    n_train = int(round(n * train_ratio))
+    n_valid = int(round(n * valid_ratio))
+    # Test absorbs the residual so the three counts always sum to `n`.
+    n_train = min(n_train, n)
+    n_valid = min(n_valid, n - n_train)
+    n_test = n - n_train - n_valid
+
+    train_pairs = shuffled[:n_train]
+    valid_pairs = shuffled[n_train : n_train + n_valid]
+    test_pairs = shuffled[n_train + n_valid : n_train + n_valid + n_test]
+
+    staging = dataset_root / _STAGING_DIR_NAME
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir()
+
+    try:
+        for split_name, split_pairs in (
+            ("train", train_pairs),
+            ("valid", valid_pairs),
+            ("test", test_pairs),
+        ):
+            if not split_pairs:
+                continue
+            img_dir = staging / split_name / "images"
+            lbl_dir = staging / split_name / "labels"
+            img_dir.mkdir(parents=True)
+            lbl_dir.mkdir(parents=True)
+            for img, lbl in split_pairs:
+                # Move-then-rename guards against same-basename collisions
+                # across the input layout (rare, but Roboflow uses unique
+                # suffixes so we wouldn't see them — still worth being
+                # explicit about overwrite).
+                dest_img = img_dir / img.name
+                _safe_move(img, dest_img)
+                if lbl is not None:
+                    dest_lbl = lbl_dir / lbl.name
+                    _safe_move(lbl, dest_lbl)
+
+        # Everything moved successfully — wipe the old layout. We walk
+        # the root once and remove anything that isn't preserved or our
+        # own staging dir.
+        for entry in list(dataset_root.iterdir()):
+            if entry.name == _STAGING_DIR_NAME:
+                continue
+            if entry.is_file():
+                if entry.name in _PRESERVED_ROOT_FILES:
+                    continue
+                # Stray text files / images at root that we didn't pair
+                # (already moved into staging if pairable). Safe to remove.
+                entry.unlink()
+            elif entry.is_dir():
+                # Old train/, valid/, test/, images/, labels/, anything else.
+                shutil.rmtree(entry)
+
+        # Promote staging contents back to root.
+        for entry in list(staging.iterdir()):
+            shutil.move(str(entry), str(dataset_root / entry.name))
+        shutil.rmtree(staging)
+    except Exception:
+        # Best-effort rollback — promote anything that's still in staging
+        # back to a sensible spot. We can't truly undo file moves, so the
+        # priority is "don't leave staging dir behind" + "tell the caller".
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+    # Write a fresh data.yaml describing the new layout. Roboflow's key
+    # name for the validation split is `val:`, not `valid:` — Ultralytics'
+    # loader is strict about that.
+    new_yaml: dict[str, object] = {
+        "train": "train/images",
+    }
+    if valid_pairs:
+        new_yaml["val"] = "valid/images"
+    if test_pairs:
+        new_yaml["test"] = "test/images"
+    if class_names:
+        new_yaml["nc"] = len(class_names)
+        new_yaml["names"] = class_names
+    (dataset_root / "data.yaml").write_text(
+        yaml.safe_dump(new_yaml, sort_keys=False)
+    )
+
+    return inspect_dataset(dataset_root)
+
+
+def _safe_move(src: Path, dst: Path) -> None:
+    """`shutil.move` with collision suffixing (` (1)`, ` (2)`, …).
+
+    Splitting datasets that were previously merged from multiple sources
+    occasionally hits filename collisions; we'd rather rename than lose
+    data. Caller is responsible for the destination directory existing.
+    """
+    if not dst.exists():
+        shutil.move(str(src), str(dst))
+        return
+    stem, suffix = dst.stem, dst.suffix
+    counter = 1
+    while True:
+        candidate = dst.with_name(f"{stem} ({counter}){suffix}")
+        if not candidate.exists():
+            shutil.move(str(src), str(candidate))
+            return
+        counter += 1
 
 
 def class_counts_from_yolo_labels(root: Path) -> Counter[str]:

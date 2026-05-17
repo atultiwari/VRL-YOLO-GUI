@@ -15,7 +15,7 @@ const IMAGE_EXTENSIONS = new Set([
   ".webp",
 ]);
 
-const ACCEPT: Accept = {
+const IMAGE_ACCEPT: Accept = {
   "image/jpeg": [".jpg", ".jpeg"],
   "image/png": [".png"],
   "image/tiff": [".tif", ".tiff"],
@@ -23,28 +23,54 @@ const ACCEPT: Accept = {
   "image/webp": [".webp"],
 };
 
-function isImageFile(file: File): boolean {
+function isHiddenOrOsFile(file: File): boolean {
   const name = file.name.toLowerCase();
-  // Skip hidden / OS-metadata files that Finder + Explorer sprinkle around.
-  if (name.startsWith(".") || name === "thumbs.db" || name === "desktop.ini") {
-    return false;
-  }
-  const dot = name.lastIndexOf(".");
-  if (dot < 0) return false;
-  return IMAGE_EXTENSIONS.has(name.slice(dot));
+  return name.startsWith(".") || name === "thumbs.db" || name === "desktop.ini";
 }
+
+function isImageFile(file: File): boolean {
+  if (isHiddenOrOsFile(file)) return false;
+  const dot = file.name.toLowerCase().lastIndexOf(".");
+  if (dot < 0) return false;
+  return IMAGE_EXTENSIONS.has(file.name.toLowerCase().slice(dot));
+}
+
+export type FolderDropzoneMode = "images" | "any";
 
 export interface FolderDropzoneProps {
   onFolder: (files: File[]) => void;
   recursive: boolean;
   className?: string;
+  /**
+   * "images" (default) → MIME-filtered to JPG/PNG/TIFF/BMP/WebP. Right for
+   *   Predict folder mode, where uploading a stray data.yaml is just noise.
+   * "any" → no MIME filter; accepts every file in the dropped folder
+   *   except hidden / OS-metadata. Right for the Train wizard, which needs
+   *   to receive `data.yaml`, `*.txt` YOLO labels, `annotations.json`,
+   *   `*.xml` VOC annotations etc. alongside images. Switching the
+   *   dropzone away from this mode was the v0.6.0 regression that made
+   *   Roboflow YOLO datasets show up as "Unknown layout" — the data.yaml
+   *   was never uploaded because the MIME accept rejected it at the
+   *   browser level.
+   */
+  mode?: FolderDropzoneMode;
 }
 
 export function FolderDropzone({
   onFolder,
   recursive,
   className,
+  mode = "images",
 }: FolderDropzoneProps) {
+  const filterFile = React.useCallback(
+    (f: File): boolean => {
+      if (isHiddenOrOsFile(f)) return false;
+      if (mode === "images" && !isImageFile(f)) return false;
+      return true;
+    },
+    [mode],
+  );
+
   // react-dropzone's useDropzone supports folders but its filtering is per-
   // file, not aware of directory depth — we get a flat File[] back. For
   // "recursive vs root only" we look at file.webkitRelativePath (set by both
@@ -53,7 +79,7 @@ export function FolderDropzone({
   const onDrop = React.useCallback(
     (acceptedFiles: File[]) => {
       const filtered = acceptedFiles.filter((f) => {
-        if (!isImageFile(f)) return false;
+        if (!filterFile(f)) return false;
         if (recursive) return true;
         const rel = (f as File & { webkitRelativePath?: string })
           .webkitRelativePath;
@@ -64,20 +90,30 @@ export function FolderDropzone({
       });
       if (filtered.length) onFolder(filtered);
     },
-    [onFolder, recursive],
+    [onFolder, recursive, filterFile],
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: ACCEPT,
+    // For "any" mode we drop the accept filter entirely so the browser
+    // surfaces every file in the directory. Even with `accept` set,
+    // react-dropzone wouldn't *fail* a drop with mixed types, but the
+    // browser's file picker would gray out everything that doesn't match
+    // — which is exactly the wrong UX for a training-dataset upload.
+    accept: mode === "images" ? IMAGE_ACCEPT : undefined,
     multiple: true,
     noClick: false,
-    // Critical: tells react-dropzone to ask the browser for directory
-    // contents instead of treating a dropped folder as one mystery item.
+    // Tells react-dropzone to ask the browser for directory contents
+    // instead of treating a dropped folder as one mystery item.
     useFsAccessApi: false,
   });
 
   const inputProps = getInputProps();
+
+  const hintLine =
+    mode === "any"
+      ? "Images, data.yaml, .txt labels, .json / .xml annotations — anything in the folder. Hidden + OS files skipped."
+      : "JPEG · PNG · TIFF · BMP · WebP. Hidden + OS files skipped.";
 
   return (
     <div
@@ -89,8 +125,6 @@ export function FolderDropzone({
         className,
       )}
     >
-      {/* webkitdirectory makes the file picker browse-folder rather than
-          file-picker. react-dropzone's getInputProps gives us the rest. */}
       <input
         {...inputProps}
         // @ts-expect-error — webkitdirectory is a Chromium-specific attribute
@@ -107,12 +141,13 @@ export function FolderDropzone({
       </div>
       <p className="text-sm font-medium text-ink">
         {isDragActive
-          ? "Drop the folder to scan its images"
+          ? mode === "any"
+            ? "Drop the dataset folder"
+            : "Drop the folder to scan its images"
           : "Drop a folder, or click to pick one"}
       </p>
       <p className="text-xs text-ink-muted">
-        JPEG · PNG · TIFF · BMP · WebP. Hidden + OS files skipped.{" "}
-        {recursive ? "Walks subfolders." : "Top level only."}
+        {hintLine} {recursive ? "Walks subfolders." : "Top level only."}
       </p>
     </div>
   );

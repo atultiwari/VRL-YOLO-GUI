@@ -12,6 +12,22 @@ for the running tracker.
 
 ---
 
+## [0.6.1] — 2026-05-17 · P4a.fix-1: Train — Dataset upload fix + split helper
+
+No tag — between-phase patch.
+
+### Fixed
+- **Roboflow YOLO datasets ship `data.yaml` + `train/images/` + `train/labels/`** and were being detected as "Unknown layout" in v0.6.0. The `FolderDropzone` we'd built for Predict was MIME-filtered to images, so `data.yaml` and all the `.txt` label files were dropped at the browser level before they ever reached the backend. `FolderDropzone` now takes a `mode: "images" | "any"` prop; the Train wizard passes `mode="any"` so the full dataset (yaml + labels + images) makes it through.
+
+### Added
+- **Prepare splits** tool — for plain-YOLO datasets (`images/` + `labels/` at root) and Roboflow exports that only ship a `train/` split, click "Prepare splits…" to reshuffle into a clean train / valid / test layout with sliders for the ratios + a random seed.
+- Backend `POST /api/datasets/{id}/split`: collects every image+label pair across the existing layout (any of plain YOLO, train-only Roboflow, or fully-split Roboflow), shuffles by seed, redistributes, wipes the old tree, and rewrites `data.yaml`. Preserves the dataset's UUID so the wizard store doesn't lose track.
+- Class names are preserved from existing `data.yaml` when present; for plain YOLO without a yaml, the splitter walks label files to find the max class id and emits `class_0..N` placeholders (rename them later in P4b).
+- Yellow callout on `/train/dataset` when no validation split is detected — clicking **Prepare splits…** opens the modal. After a successful split, a smaller **Re-split** button stays available for tweaking ratios.
+- Backend tolerates ratios summing to `1.0 ± 0.001` (frontend rounds via integer percentages → divide by 100, so the sum sometimes drifts by a hair).
+
+---
+
 ## [0.6.0] — 2026-05-17 · P4a: Train — Detection wizard
 
 **Tag:** `v0.6-p4a-train-detect-wizard`
@@ -149,6 +165,7 @@ No tag — between-phase patch.
 
 ---
 
+[0.6.1]: https://github.com/atultiwari/VRL-YOLO-GUI/commits/main
 [0.6.0]: https://github.com/atultiwari/VRL-YOLO-GUI/releases/tag/v0.6-p4a-train-detect-wizard
 [0.5.1]: https://github.com/atultiwari/VRL-YOLO-GUI/commits/main
 [0.5.0]: https://github.com/atultiwari/VRL-YOLO-GUI/releases/tag/v0.5-p3b-predict-reports

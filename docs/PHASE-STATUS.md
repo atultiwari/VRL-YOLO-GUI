@@ -17,6 +17,7 @@
 | **P3b — Predict v1: reports, import & settings** | ✅ done | `v0.5-p3b-predict-reports` | `0d05150` |
 | P3b.fix-1 — QtWebEngine downloads | ✅ done | — | `cd1a92b` |
 | **P4a — Train (Detection) wizard** | ✅ done | `v0.6-p4a-train-detect-wizard` | `08d5f46` |
+| P4a.fix-1 — Dataset upload + split helper | ✅ done | — | TBD |
 | P4b — Train (Detection) local run | ⏳ next | — | — |
 | P5 — Train (Classification) | ⏳ pending | — | — |
 | P6 — Train on Colab | ⏳ pending | — | — |

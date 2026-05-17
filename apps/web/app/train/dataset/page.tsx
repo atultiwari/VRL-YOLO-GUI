@@ -7,11 +7,11 @@ import {
   CheckCircle2,
   Database,
   FolderOpen,
+  Scissors,
   X,
 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,8 +23,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { FolderDropzone } from "@/components/ui/folder-dropzone";
+import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
-import { ApiError, uploadDataset } from "@/lib/api";
+import { ApiError, splitDataset, uploadDataset } from "@/lib/api";
 import { useTrainStore } from "@/lib/train-store";
 import type { DatasetFormat, DatasetInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -158,6 +159,7 @@ export default function DatasetWizardPage() {
           dataset={dataset}
           onReset={onReset}
           onContinue={() => router.push("/train/configure")}
+          onDatasetChanged={setDataset}
         />
       )}
     </section>
@@ -188,7 +190,11 @@ function UploadStage({
   onClear: () => void;
 }) {
   if (!files.length) {
-    return <FolderDropzone onFolder={onFolder} recursive />;
+    // mode="any" — training datasets carry yaml/txt/json/xml alongside
+    // images; "images" mode would silently drop data.yaml + the label
+    // files, which is the v0.6.0 regression that made every Roboflow
+    // dataset show up as "Unknown layout".
+    return <FolderDropzone onFolder={onFolder} recursive mode="any" />;
   }
   return (
     <Card>
@@ -257,19 +263,38 @@ function UploadStage({
   );
 }
 
+function hasValidationSplit(dataset: DatasetInfo): boolean {
+  return dataset.splits.some(
+    (s) => s.name === "valid" || s.name === "val" || s.name === "validation",
+  );
+}
+
+function needsSplitting(dataset: DatasetInfo): boolean {
+  // Only detection datasets pass through the wizard for training; classify
+  // skips this step (P5). For detect: surface a hint when there's no
+  // validation split, since `model.train()` won't compute mAP without one.
+  if (dataset.task !== "detect") return false;
+  if (dataset.format === "unknown") return false;
+  return !hasValidationSplit(dataset);
+}
+
 function DatasetSummary({
   dataset,
   onReset,
   onContinue,
+  onDatasetChanged,
 }: {
   dataset: DatasetInfo;
   onReset: () => void;
   onContinue: () => void;
+  onDatasetChanged: (next: DatasetInfo) => void;
 }) {
+  const [splitModalOpen, setSplitModalOpen] = useState(false);
   const totalImages = dataset.splits.reduce((acc, s) => acc + s.image_count, 0);
   const totalLabels = dataset.splits.reduce((acc, s) => acc + s.label_count, 0);
   const isClassify = dataset.task === "classify";
   const formatTone = dataset.format === "unknown" ? "danger" : "clinical";
+  const wantsSplit = needsSplitting(dataset);
 
   return (
     <Card>
@@ -356,10 +381,44 @@ function DatasetSummary({
           </div>
         ) : null}
 
-        <div className="flex gap-2 pt-2">
+        {wantsSplit ? (
+          <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+            <Scissors className="mt-0.5 size-4 shrink-0" />
+            <div className="flex-1">
+              <p className="font-medium">
+                No validation split detected.
+              </p>
+              <p className="mt-0.5 text-amber-900/80">
+                Ultralytics needs a <code className="rounded bg-amber-100 px-1">val:</code>{" "}
+                split to compute mAP during training. Reshuffle into train /
+                valid / test now, or continue and skip validation metrics.
+              </p>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="mt-2"
+                onClick={() => setSplitModalOpen(true)}
+              >
+                <Scissors className="size-4" /> Prepare splits…
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2 pt-2">
           <Button variant="secondary" onClick={onReset}>
             <X className="size-4" /> Pick another folder
           </Button>
+          {!wantsSplit && !isClassify && dataset.format !== "unknown" ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSplitModalOpen(true)}
+              title="Re-split this dataset with different ratios."
+            >
+              <Scissors className="size-4" /> Re-split
+            </Button>
+          ) : null}
           <Button
             className="flex-1"
             disabled={isClassify || dataset.format === "unknown"}
@@ -376,7 +435,181 @@ function DatasetSummary({
           </p>
         ) : null}
       </CardContent>
+
+      {splitModalOpen ? (
+        <SplitModal
+          dataset={dataset}
+          onClose={() => setSplitModalOpen(false)}
+          onSplit={(next) => {
+            onDatasetChanged(next);
+            setSplitModalOpen(false);
+          }}
+        />
+      ) : null}
     </Card>
+  );
+}
+
+function SplitModal({
+  dataset,
+  onClose,
+  onSplit,
+}: {
+  dataset: DatasetInfo;
+  onClose: () => void;
+  onSplit: (next: DatasetInfo) => void;
+}) {
+  // Default 80 / 10 / 10. Track integer percentages internally so the
+  // sliders don't drift into floating-point garbage; we divide by 100
+  // before sending. Sum is *forced* to 100 — when the user nudges train,
+  // valid and test absorb the residual proportionally.
+  const [train, setTrain] = useState(80);
+  const [valid, setValid] = useState(10);
+  const [test, setTest] = useState(10);
+  const [seed, setSeed] = useState(42);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const totalPairs = useMemo(
+    () => dataset.splits.reduce((acc, s) => acc + Math.min(s.image_count, s.label_count), 0),
+    [dataset],
+  );
+
+  const onTrainChange = (v: number) => {
+    const next = Math.max(1, Math.min(99, Math.round(v)));
+    const remaining = 100 - next;
+    // Preserve the valid/test *ratio* between themselves so a user who
+    // wanted 80/10/10 and bumps train to 85 ends up at 85/7.5/7.5 instead
+    // of 85/10/5 (we'd rather erode both than zero one out).
+    const sumOther = Math.max(1, valid + test);
+    const newValid = Math.round((valid / sumOther) * remaining);
+    const newTest = remaining - newValid;
+    setTrain(next);
+    setValid(newValid);
+    setTest(newTest);
+  };
+
+  const onValidChange = (v: number) => {
+    const next = Math.max(0, Math.min(100 - train, Math.round(v)));
+    setValid(next);
+    setTest(100 - train - next);
+  };
+
+  const submit = async () => {
+    setRunning(true);
+    setError(null);
+    try {
+      const updated = await splitDataset(dataset.id, {
+        trainRatio: train / 100,
+        validRatio: valid / 100,
+        testRatio: test / 100,
+        seed,
+      });
+      onSplit(updated);
+    } catch (err) {
+      const msg =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+          ? err.message
+          : String(err);
+      setError(msg);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const previewTrain = Math.round((train / 100) * totalPairs);
+  const previewValid = Math.round((valid / 100) * totalPairs);
+  const previewTest = totalPairs - previewTrain - previewValid;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <Card className="w-full max-w-lg">
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Scissors className="size-4 text-accent" />
+                Prepare train / valid / test splits
+              </CardTitle>
+              <CardDescription>
+                Reshuffles every image+label pair in this dataset into a
+                fresh Roboflow-shaped layout and rewrites data.yaml. The
+                operation is destructive within the dataset&apos;s upload
+                directory — re-upload if you want the original back.
+              </CardDescription>
+            </div>
+            <Button variant="ghost" size="sm" onClick={onClose} disabled={running}>
+              <X className="size-4" />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Slider
+            label={`Train (${previewTrain} images)`}
+            value={train}
+            min={1}
+            max={99}
+            step={1}
+            format={(v) => `${v.toFixed(0)}%`}
+            onChange={onTrainChange}
+          />
+          <Slider
+            label={`Valid (${previewValid} images)`}
+            value={valid}
+            min={0}
+            max={100 - train}
+            step={1}
+            format={(v) => `${v.toFixed(0)}%`}
+            onChange={onValidChange}
+            hint="Set to 0 to skip validation (training still runs but no mAP)."
+          />
+          <div className="flex items-baseline justify-between text-sm">
+            <span className="text-ink">Test</span>
+            <span className="tabular-nums font-medium text-ink">
+              {test}% &nbsp;&middot;&nbsp; {previewTest} images
+            </span>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-ink-muted">
+              Random seed
+            </label>
+            <input
+              type="number"
+              value={seed}
+              onChange={(e) => setSeed(Number(e.target.value))}
+              className="h-9 w-32 rounded-md border border-surface-muted bg-surface px-3 text-sm tabular-nums"
+            />
+            <span className="ml-2 text-xs text-ink-muted">
+              Same seed = same partition; useful for reproducible runs.
+            </span>
+          </div>
+          {error ? (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+              <AlertTriangle className="mr-2 inline-block size-4 align-text-bottom" />
+              {error}
+            </div>
+          ) : null}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" disabled={running} onClick={onClose}>
+              Cancel
+            </Button>
+            <Button disabled={running || train + valid + test !== 100} onClick={submit}>
+              {running ? (
+                <>
+                  <Spinner /> Splitting…
+                </>
+              ) : (
+                <>
+                  <Scissors className="size-4" /> Split &amp; re-inspect
+                </>
+              )}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

@@ -173,6 +173,40 @@ export async function fetchDataset(datasetId: string): Promise<DatasetInfo> {
   return fetchJson(`${API_BASE}/datasets/${encodeURIComponent(datasetId)}`);
 }
 
+export interface SplitDatasetArgs {
+  trainRatio: number;
+  validRatio: number;
+  testRatio: number;
+  seed: number;
+}
+
+/**
+ * Reorganise an uploaded dataset into clean train/valid/test splits.
+ *
+ * The backend handles three input shapes identically (plain YOLO at
+ * root, Roboflow with only `train/`, Roboflow with all splits) — it
+ * flattens to image+label pairs, shuffles by `seed`, partitions, then
+ * writes a Roboflow-shaped layout with an updated data.yaml.
+ *
+ * Destructive within the dataset's own directory but the UUID stays
+ * the same so the Train wizard store doesn't lose track.
+ */
+export async function splitDataset(
+  datasetId: string,
+  args: SplitDatasetArgs,
+): Promise<DatasetInfo> {
+  return fetchJson(`${API_BASE}/datasets/${encodeURIComponent(datasetId)}/split`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      train_ratio: args.trainRatio,
+      valid_ratio: args.validRatio,
+      test_ratio: args.testRatio,
+      seed: args.seed,
+    }),
+  });
+}
+
 export interface DatasetUploadProgress {
   loaded: number;
   total: number;

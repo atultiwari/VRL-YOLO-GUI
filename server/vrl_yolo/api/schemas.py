@@ -191,3 +191,17 @@ class HardwareInfo(BaseModel):
     # default image size (640). Classification can usually go 2-3× higher
     # at the same VRAM — see `engine/hardware.py`.
     suggested_batch_size: int = 8
+
+
+class SplitDatasetRequest(BaseModel):
+    """Body for `POST /api/datasets/{id}/split`.
+
+    Defaults match the Roboflow recommendation (80 / 10 / 10). The
+    backend tolerates ±0.001 drift in the sum to forgive frontend
+    rounding (sliders multiplied by 100 + division by 100, etc.).
+    """
+
+    train_ratio: float = Field(0.8, ge=0.0, le=1.0)
+    valid_ratio: float = Field(0.1, ge=0.0, le=1.0)
+    test_ratio: float = Field(0.1, ge=0.0, le=1.0)
+    seed: int = 42
