@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P4a.fix-1",
     title: "Train — Dataset upload fix + split helper",
     tag: null,
-    commit: "TBD",
+    commit: "debf84b",
     date: "2026-05-17",
     status: "current",
     features: [
