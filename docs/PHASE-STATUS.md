@@ -12,8 +12,9 @@
 | **P1 — Predict (Detection)** | ✅ done | `v0.2-p1-predict-detect` | `2acd8f5` |
 | P1.fix-1 — Cold-start race fix | ✅ done | — | `427093d` |
 | **P2 — Predict (Classification)** | ✅ done | `v0.3-p2-predict-classify` | `455efc8` |
-| P3a — Predict v1: batch + presets | ⏳ next | — | — |
-| P3b — Predict v1: reports + import | ⏳ pending | — | — |
+| Topbar fix — live version | ✅ done | — | `e62d8d2` |
+| **P3a — Predict v1: batch + presets** | ✅ done | `v0.4-p3a-predict-batch` | TBD |
+| P3b — Predict v1: reports + import | ⏳ next | — | — |
 | P4a — Train (Detection) wizard | ⏳ pending | — | — |
 | P4b — Train (Detection) local run | ⏳ pending | — | — |
 | P5 — Train (Classification) | ⏳ pending | — | — |
@@ -23,7 +24,7 @@
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at the P2 commit (`v0.3-p2-predict-classify`). **Next phase:** P3a — folder batch + histopathology / hematology workflow presets.
+**Current head:** `main` at the P3a commit (`v0.4-p3a-predict-batch`). **Next phase:** P3b — folder-batch CSV / XLSX / PDF reports and user model import via the UI.
 
 ---
 
@@ -154,18 +155,61 @@ pnpm build (desktop)          → /changelog 4.86 kB · /predict 126 kB (Rechart
 - User .pt import via UI still returns 501; `/api/models/import` (P3) will read `model.task` from the uploaded checkpoint and place it in `<storage_root>/models/<task>/`.
 - No CSV / XLSX / PDF reports yet — P3b ships the task-aware report templates.
 
+### ✅ P3a — Predict v1: batch + presets · `v0.4-p3a-predict-batch`
+
+**Phase deliverable:** doctor drops a folder of slide patches, sees a
+live progress bar, a per-image table, and an aggregate roll-up. Picking
+a clinical preset prefills the right model + thresholds.
+
+**Sub-phases:**
+
+| # | Subject | Outcome |
+|---|---|---|
+| P3a.0 | Topbar version fix | `useLiveVersion()` reads `/api/health`; topbar shows `v0.4.0 · predict — batch & workflow presets` instead of hardcoded P0 string |
+| P3a.1 | Backend presets | `engine/presets.py` — 9 typed `Preset` dataclasses across histopathology + hematology, detect + classify. `/api/presets` exposes them via Pydantic schema. |
+| P3a.2 | Folder dropzone | `components/ui/folder-dropzone.tsx` — supports HTML5 directory drag + `<input webkitdirectory>`. Filters by extension, skips hidden + OS-metadata files; respects the `recursive` checkbox. |
+| P3a.3 | Batch runner + hooks | `lib/batch.ts` runs `inferSingle` sequentially over the File list with cancel + per-file callbacks; concurrency=1 by design. `lib/hooks.ts` exposes the shared `useLiveVersion()`. |
+| P3a.4 | /predict UI | Mode toggle (single / folder), preset picker grouped by domain, progress bar, per-image table (task-aware rows + "review" pill for classify), aggregate panel for both tasks, cancel button via `AbortController`. |
+
+**Deliberate deviation from PLAN.md §6:**
+The plan listed `/api/inference/batch` (POST + WS streaming) as the
+backend surface. P3a runs the batch entirely client-side by calling
+`/api/inference/single` N times — simpler, gives us cancel + progress
+for free, and the registry's LRU cache means back-to-back single
+requests hit warm weights anyway (~50 ms each on MPS once the model is
+loaded). A proper streaming batch endpoint will land in P4 when Train
+mode needs the same WebSocket plumbing.
+
+**Verification:**
+
+```
+step: backend ready in 55 ms
+GET  /api/health      → version 0.4.0
+GET  /api/presets     → 9 records (5 hematology + 4 histopathology),
+                        5 detect + 4 classify
+GET  /predict/        → 200 (Pyloid + static export)
+pnpm type-check       → clean
+pnpm build (desktop)  → /predict 130 kB (+4 kB vs P2)
+```
+
+**Known limitations carried into P3b:**
+- No CSV / XLSX / PDF report exports yet — P3b ships the templates.
+- `/api/models/import` still 501; UI button stays disabled.
+- Sliders rerun on click only; live-update is in P3b polish.
+- Presets ship sensible defaults but assume the bundled COCO/ImageNet weights — point them at fine-tuned checkpoints for real clinical use.
+
 ---
 
-## Up next: P3a — Predict v1 — batch + presets
+## Up next: P3b — Predict v1 — reports + import
 
 **Estimated 1 week** per PLAN.md §14. Scope:
 
-- `/api/inference/batch` — accept a folder path (desktop mode) or zipped upload (web mode), stream progress via WS.
-- Histopathology + hematology workflow presets per task (PLAN.md §10) — one-click run that wires conf / IoU / class subset together.
-- Predict UI: folder drop, results table per image, aggregate panel.
-- Recursive option for nested folder structures (Roboflow exports often nest by class).
+- CSV / XLSX / PDF report generation (task-aware templates per PLAN.md §10).
+- `/api/models/import` — accept a `.pt` upload, read `model.task` from the checkpoint, copy into `<storage_root>/models/<task>/`, refresh the registry.
+- Slider live-update for single-image inference (re-run debounced).
+- Sample-folder fixture in `tests/fixtures/` so future regressions catch broken batch flows.
 
-**Phase tag at completion:** `v0.4-p3a-predict-batch`.
+**Phase tag at completion:** `v0.5-p3b-predict-reports`.
 
 ---
 

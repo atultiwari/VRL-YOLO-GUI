@@ -8,7 +8,15 @@ from fastapi.staticfiles import StaticFiles
 
 from vrl_yolo import __version__
 from vrl_yolo.api.lifespan import lifespan
-from vrl_yolo.api.routers import dataset, health, inference, models, reports, training
+from vrl_yolo.api.routers import (
+    dataset,
+    health,
+    inference,
+    models,
+    presets,
+    reports,
+    training,
+)
 from vrl_yolo.config import Settings
 
 
@@ -40,6 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     prefix = settings.api_prefix
     app.include_router(health.router, prefix=prefix)
     app.include_router(models.router, prefix=prefix)
+    app.include_router(presets.router, prefix=prefix)
     app.include_router(dataset.router, prefix=prefix)
     app.include_router(inference.router, prefix=prefix)
     app.include_router(training.router, prefix=prefix)

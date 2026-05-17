@@ -65,3 +65,23 @@ export interface HealthResponse {
   python: string;
   platform: string;
 }
+
+// --- Presets ---
+
+export type Domain = "histopathology" | "hematology";
+
+export interface PresetInfo {
+  id: string;
+  domain: Domain;
+  task: Task;
+  label: string;
+  description: string;
+  default_model: string;
+  conf: number;
+  iou: number | null;
+  class_filter: string[] | null;
+}
+
+export interface PresetsListResponse {
+  presets: PresetInfo[];
+}

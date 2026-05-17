@@ -82,3 +82,25 @@ InferenceResponse = Annotated[
     Union[DetectionResponse, ClassificationResponse],
     Field(discriminator="task"),
 ]
+
+
+# --- Presets ---
+
+
+Domain = Literal["histopathology", "hematology"]
+
+
+class PresetInfo(BaseModel):
+    id: str
+    domain: Domain
+    task: Task
+    label: str
+    description: str
+    default_model: str
+    conf: float
+    iou: float | None = None
+    class_filter: list[str] | None = None
+
+
+class PresetsListResponse(BaseModel):
+    presets: list[PresetInfo]

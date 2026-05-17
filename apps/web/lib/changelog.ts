@@ -41,13 +41,41 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.4.0",
+    phase: "P3a",
+    title: "Predict — Batch & Workflow Presets",
+    tag: "v0.4-p3a-predict-batch",
+    commit: "TBD",
+    date: "2026-05-17",
+    status: "current",
+    features: [
+      "Folder mode: drop a folder of slide patches; the UI runs inference image-by-image with a live progress bar.",
+      "Per-image results table — file, top class / box count, conf or count, inference ms — works for both detection and classification.",
+      "Aggregate panel: detection rolls up per-class totals + max conf across the batch; classification rolls up the class distribution + flagged-count (top-1 below the review threshold).",
+      "Recursive checkbox controls whether the dropzone walks subfolders or only the top level.",
+      "Cancel button (`StopCircle`) aborts the in-flight batch — backed by `AbortController` plumbed through `runBatch()`.",
+      "Workflow presets sidebar: 9 clinical workflows (histopathology mitosis / nuclei / tumour-subtype / Gleason; hematology WBC-diff / bone-marrow / malaria / smear-pathology / marrow-pattern). Picking one prefills model + conf + iou.",
+      "`/api/presets` exposes the preset catalog from `engine/presets.py` (typed `Preset` dataclasses).",
+      "Top-bar badge now reads from `/api/health` via a shared `useLiveVersion()` hook — no more hardcoded version strings.",
+    ],
+    fixes: [
+      "Top-bar version pill was stuck at 'v0.1.0 · scaffolding' since P0; now reflects the running build (e.g. 'v0.4.0 · predict — batch & workflow presets').",
+    ],
+    knownLimitations: [
+      "Sliders still re-run on click only — live updates land in P3b polish.",
+      "User .pt import via the UI still returns 501 (lands in P3b).",
+      "CSV / XLSX / PDF reports not yet implemented — P3b ships the task-aware report templates.",
+      "Batch runs are sequential (concurrency = 1) on purpose; multi-GPU parallelism is a P10 problem.",
+    ],
+  },
+  {
     version: "0.3.0",
     phase: "P2",
     title: "Predict — Classification",
     tag: "v0.3-p2-predict-classify",
     commit: "455efc8",
     date: "2026-05-17",
-    status: "current",
+    status: "shipped",
     features: [
       "Single-image classification via Ultralytics' classify head — top-1 + top-5 returned for the full softmax distribution.",
       "/predict view task-switches based on the selected model: no SVG overlay, top-1 banner, top-5 bar chart (Recharts).",

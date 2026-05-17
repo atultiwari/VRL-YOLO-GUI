@@ -12,6 +12,30 @@ for the running tracker.
 
 ---
 
+## [0.4.0] — 2026-05-17 · P3a: Predict — Batch & Workflow Presets
+
+**Tag:** `v0.4-p3a-predict-batch`
+
+### Added
+- **Folder mode** in `/predict` — drop a folder of slide patches; the UI runs inference image-by-image with a live progress bar.
+- **Per-image results table** — filename, top class / box count, conf or count, inference time. Task-aware: detection rows show boxes + top class, classification rows show top-1 + a "review" pill when below threshold.
+- **Aggregate panel** — detection rolls up per-class totals + max conf across the batch; classification rolls up the class distribution + flagged-count (top-1 below the review threshold).
+- **Recursive** checkbox controls whether the dropzone walks subfolders or sticks to the top level.
+- **Cancel** button (`StopCircle`) aborts the in-flight batch — backed by `AbortController` plumbed through `runBatch()` in `apps/web/lib/batch.ts`.
+- **Workflow presets** sidebar in `/predict`: 9 clinical workflows (histopathology mitosis / nuclei / tumour-subtype / Gleason; hematology WBC-diff / bone-marrow / malaria / smear-pathology / marrow-pattern). Picking one prefills model + conf + iou.
+- `/api/presets` endpoint exposes the catalog from `server/vrl_yolo/engine/presets.py` (typed `Preset` dataclasses).
+
+### Fixed
+- Topbar version pill was stuck at "v0.1.0 · scaffolding" since P0; now reflects the running build via a shared `useLiveVersion()` hook (TanStack Query, deduped with the changelog page).
+
+### Known limitations (deferred)
+- Sliders still re-run on click only — live updates land in P3b polish.
+- User `.pt` import via the UI still returns 501 (lands in P3b).
+- CSV / XLSX / PDF reports not yet implemented — P3b ships the task-aware report templates.
+- Batch runs are sequential (concurrency = 1) on purpose; multi-GPU parallelism is a P10 problem.
+
+---
+
 ## [0.3.0] — 2026-05-17 · P2: Predict — Classification
 
 **Tag:** `v0.3-p2-predict-classify`
@@ -71,6 +95,7 @@ for the running tracker.
 
 ---
 
+[0.4.0]: https://github.com/atultiwari/VRL-YOLO-GUI/releases/tag/v0.4-p3a-predict-batch
 [0.3.0]: https://github.com/atultiwari/VRL-YOLO-GUI/releases/tag/v0.3-p2-predict-classify
 [0.2.1]: https://github.com/atultiwari/VRL-YOLO-GUI/commit/427093d
 [0.2.0]: https://github.com/atultiwari/VRL-YOLO-GUI/releases/tag/v0.2-p1-predict-detect

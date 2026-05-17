@@ -17,13 +17,15 @@ background. Success = doctor installs one binary, drops a folder of slide
 patches, gets annotated images (detect) or a prediction table + PDF (classify)
 in under 10 minutes.
 
-**Status (v0.3.0, 2026-05-17):**
+**Status (v0.4.0, 2026-05-17):**
 - ✅ Pre — `CLAUDE.md` entry guide (`9bd0b83`)
 - ✅ **P0** — Scaffolding · `v0.1-p0-scaffolding` (`d06e9e2`)
 - ✅ **P1** — Predict (Detection) · `v0.2-p1-predict-detect` (`2acd8f5`)
 - ✅ P1.fix-1 — Cold-start race fix (`427093d`)
-- ✅ **P2** — Predict (Classification) · `v0.3-p2-predict-classify`
-- ⏳ **P3a next** — Predict v1: batch + workflow presets
+- ✅ **P2** — Predict (Classification) · `v0.3-p2-predict-classify` (`455efc8`)
+- ✅ Topbar version fix (`e62d8d2`)
+- ✅ **P3a** — Predict v1: batch + workflow presets · `v0.4-p3a-predict-batch`
+- ⏳ **P3b next** — Predict v1: reports + user model import
 
 Live status snapshot is in [`docs/PHASE-STATUS.md`](docs/PHASE-STATUS.md);
 per-build feature list is in [`CHANGELOG.md`](CHANGELOG.md) (also surfaced
@@ -38,6 +40,9 @@ commit.
    flip the previous current entry to `"shipped"`.
 3. Mirror the entry into `CHANGELOG.md`.
 4. Update the snapshot table in `docs/PHASE-STATUS.md`.
+5. Push a follow-up `chore: backfill SHA` commit to wire the real
+   commit hash into the changelog (you can't know your own SHA before
+   committing).
 
 ---
 

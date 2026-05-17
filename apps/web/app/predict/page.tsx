@@ -1,20 +1,30 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Brain, Cpu, Gauge, Microscope, Play, Sparkles, Timer, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
 import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+  AlertTriangle,
+  Brain,
+  CheckCircle2,
+  FolderOpen,
+  Gauge,
+  Image as ImageIcon,
+  Microscope,
+  Play,
+  StopCircle,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { Badge } from "@/components/ui/badge";
+import {
+  BatchAggregatePanel,
+  BatchTable,
+} from "@/components/predict/batch-view";
+import { PresetPicker } from "@/components/predict/preset-picker";
+import {
+  BoxOverlay,
+  SingleClassificationPanel,
+  SingleDetectionPanel,
+} from "@/components/predict/single-view";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -24,514 +34,671 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Dropzone } from "@/components/ui/dropzone";
+import { FolderDropzone } from "@/components/ui/folder-dropzone";
 import { Select } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
-import { fetchModels, inferSingle } from "@/lib/api";
+import { fetchModels, fetchPresets, inferSingle } from "@/lib/api";
+import {
+  aggregate,
+  runBatch,
+  type BatchAggregate,
+  type BatchResultItem,
+} from "@/lib/batch";
 import { cn, formatBytes } from "@/lib/utils";
 import type {
-  ClassificationResponse,
-  DetectionBox,
   DetectionResponse,
   InferenceResponse,
+  PresetInfo,
   Task,
 } from "@/lib/types";
 
-// Stable palette per class index — keeps colour consistent across runs
-// and across confidence-slider re-renders, which matters when a doctor is
-// eyeballing whether the same nucleus moved between two thresholds.
-const PALETTE = [
-  "#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899",
-  "#14b8a6", "#f97316", "#0ea5e9", "#84cc16", "#f43f5e", "#a855f7",
-  "#6366f1", "#22c55e", "#eab308", "#06b6d4", "#d946ef", "#84cc16",
-];
+type Mode = "single" | "folder";
 
-function colourFor(classId: number): string {
-  return PALETTE[classId % PALETTE.length];
-}
+export default function PredictPage() {
+  const [mode, setMode] = useState<Mode>("single");
 
-function BoxOverlay({
-  boxes,
-  imageW,
-  imageH,
-}: {
-  boxes: DetectionBox[];
-  imageW: number;
-  imageH: number;
-}) {
-  if (!boxes.length) return null;
+  // Shared controls
+  const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
+  const [activePresetId, setActivePresetId] = useState<string | undefined>(undefined);
+  const [conf, setConf] = useState(0.25);
+  const [iou, setIou] = useState(0.45);
+
+  // Single-image state
+  const [singleFile, setSingleFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [singleResult, setSingleResult] = useState<InferenceResponse | null>(null);
+
+  // Folder / batch state
+  const [folderFiles, setFolderFiles] = useState<File[]>([]);
+  const [recursive, setRecursive] = useState(true);
+  const [items, setItems] = useState<BatchResultItem[]>([]);
+  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const { data: modelsData, isLoading: modelsLoading } = useQuery({
+    queryKey: ["models"],
+    queryFn: fetchModels,
+  });
+  const { data: presetsData } = useQuery({
+    queryKey: ["presets"],
+    queryFn: fetchPresets,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const allModels = modelsData?.models ?? [];
+  const presets = presetsData?.presets ?? [];
+
+  const selectedTask: Task | undefined = useMemo(
+    () => allModels.find((m) => m.name === selectedModel)?.task,
+    [allModels, selectedModel],
+  );
+  const isClassify = selectedTask === "classify";
+
+  // Default-model selection: prefer the registry's saved default; fall back
+  // to the first detect (or any) model so a fresh install still works.
+  useEffect(() => {
+    if (selectedModel || allModels.length === 0) return;
+    const def = modelsData?.defaults.detect ?? modelsData?.defaults.classify;
+    setSelectedModel(def ?? allModels[0]?.name);
+  }, [modelsData, allModels, selectedModel]);
+
+  // Single-image preview URL lifecycle.
+  useEffect(() => {
+    if (!singleFile) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(singleFile);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [singleFile]);
+
+  // Preset selection prefills model + slider knobs.
+  const onPresetSelect = useCallback(
+    (preset: PresetInfo | null) => {
+      if (!preset) {
+        setActivePresetId(undefined);
+        return;
+      }
+      setActivePresetId(preset.id);
+      const match = allModels.find((m) => m.name === preset.default_model);
+      if (match) {
+        setSelectedModel(match.name);
+      } else {
+        const fallback = modelsData?.defaults[preset.task];
+        if (fallback) setSelectedModel(fallback);
+      }
+      setConf(preset.conf);
+      if (preset.iou !== null) setIou(preset.iou);
+    },
+    [allModels, modelsData],
+  );
+
+  // Single-image inference.
+  const single = useMutation({
+    mutationFn: async () => {
+      if (!singleFile || !selectedModel) throw new Error("file and model required");
+      return inferSingle({ image: singleFile, model: selectedModel, conf, iou });
+    },
+    onSuccess: (data) => setSingleResult(data),
+    onError: () => setSingleResult(null),
+  });
+
+  // Folder batch.
+  const runFolderBatch = useCallback(async () => {
+    if (!folderFiles.length || !selectedModel) return;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setBatchRunning(true);
+    setItems([]);
+    setProgress({ current: 0, total: folderFiles.length });
+
+    try {
+      await runBatch({
+        files: folderFiles,
+        model: selectedModel,
+        conf,
+        iou,
+        signal: controller.signal,
+        onProgress: (p) => {
+          if (p.phase === "done") {
+            setProgress({ current: p.current, total: p.total });
+          }
+        },
+        onItem: (item) => {
+          setItems((prev) => [...prev, item]);
+        },
+      });
+    } finally {
+      setBatchRunning(false);
+      abortRef.current = null;
+    }
+  }, [folderFiles, selectedModel, conf, iou]);
+
+  const cancelBatch = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  const onSingleDrop = (next: File) => {
+    setSingleFile(next);
+    setSingleResult(null);
+  };
+  const onSingleClear = () => {
+    setSingleFile(null);
+    setSingleResult(null);
+    single.reset();
+  };
+  const onFolderDrop = (files: File[]) => {
+    setFolderFiles(files);
+    setItems([]);
+    setProgress(null);
+  };
+  const onFolderClear = () => {
+    setFolderFiles([]);
+    setItems([]);
+    setProgress(null);
+  };
+
+  const modelOptions = allModels.map((m) => ({
+    value: m.name,
+    label: `${m.name}  ·  ${m.task}  ·  ${m.num_classes} cls  ·  ${formatBytes(m.size_mb)}`,
+  }));
+
+  const canRunSingle = !!singleFile && !!selectedModel && !single.isPending;
+  const canRunBatch = folderFiles.length > 0 && !!selectedModel && !batchRunning;
+  const showOverlay = singleResult?.task === "detect";
+  const aggForBatch = useMemo(() => aggregate(items, conf), [items, conf]);
+
   return (
-    <svg
-      viewBox={`0 0 ${imageW} ${imageH}`}
-      preserveAspectRatio="xMidYMid meet"
-      className="pointer-events-none absolute inset-0 size-full"
-      aria-hidden="true"
-    >
-      {boxes.map((b, i) => {
-        const [x1, y1, x2, y2] = b.xyxy;
-        const stroke = colourFor(b.class_id);
-        const w = x2 - x1;
-        const h = y2 - y1;
-        return (
-          <g key={i}>
-            <rect
-              x={x1}
-              y={y1}
-              width={w}
-              height={h}
-              fill={stroke}
-              fillOpacity={0.06}
-              stroke={stroke}
-              strokeWidth={Math.max(2, imageW * 0.0025)}
+    <section className="flex h-full flex-col gap-8 px-12 py-12">
+      <header className="flex items-end justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium uppercase tracking-[0.2em] text-ink-muted">
+            Predict · single image &amp; folder batch
+          </p>
+          <h1 className="mt-2 text-4xl font-semibold tracking-tight">
+            Run a model on slide patches.
+          </h1>
+          <p className="mt-3 max-w-2xl text-ink-muted">
+            Single mode: one patch, full overlay or top-5 chart. Folder mode:
+            drop a folder, see a per-image table and aggregate roll-up.
+            Workflow presets prefill model + thresholds for common clinical
+            tasks. CSV / XLSX / PDF reports land in P3b.
+          </p>
+        </div>
+        <ModeToggle mode={mode} onChange={setMode} />
+      </header>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[360px_1fr]">
+        <aside className="flex flex-col gap-4">
+          {presets.length ? (
+            <PresetPicker
+              presets={presets}
+              selected={activePresetId}
+              onSelect={onPresetSelect}
             />
-            <rect
-              x={x1}
-              y={Math.max(0, y1 - imageH * 0.035)}
-              width={Math.min(w, imageW * 0.4)}
-              height={imageH * 0.035}
-              fill={stroke}
-              fillOpacity={0.95}
+          ) : null}
+
+          <ControlCard
+            isClassify={isClassify}
+            selectedTask={selectedTask}
+            selectedModel={selectedModel}
+            modelOptions={modelOptions}
+            modelsLoading={modelsLoading}
+            onSelectModel={(v) => {
+              setSelectedModel(v);
+              setActivePresetId(undefined);
+            }}
+            conf={conf}
+            onConfChange={(v) => {
+              setConf(v);
+              setActivePresetId(undefined);
+            }}
+            iou={iou}
+            onIouChange={(v) => {
+              setIou(v);
+              setActivePresetId(undefined);
+            }}
+            mode={mode}
+            recursive={recursive}
+            onRecursiveChange={setRecursive}
+            canRunSingle={canRunSingle}
+            singlePending={single.isPending}
+            singleError={single.isError ? single.error : null}
+            onRunSingle={() => single.mutate()}
+            onClearSingle={onSingleClear}
+            singleFilePresent={!!singleFile}
+            canRunBatch={canRunBatch}
+            batchRunning={batchRunning}
+            progress={progress}
+            folderFileCount={folderFiles.length}
+            onRunBatch={runFolderBatch}
+            onCancelBatch={cancelBatch}
+            onClearFolder={onFolderClear}
+          />
+        </aside>
+
+        <div className="flex flex-col gap-4">
+          {mode === "single" ? (
+            <SingleColumn
+              previewUrl={previewUrl}
+              singleFile={singleFile}
+              singleResult={singleResult}
+              showOverlay={showOverlay}
+              reviewThreshold={conf}
+              onSingleDrop={onSingleDrop}
+              onSingleClear={onSingleClear}
             />
-            <text
-              x={x1 + 8}
-              y={Math.max(imageH * 0.026, y1 - 6)}
-              fill="white"
-              fontSize={imageH * 0.022}
-              fontWeight={600}
-              fontFamily="ui-sans-serif, system-ui, sans-serif"
-            >
-              {b.class_name} {(b.conf * 100).toFixed(0)}%
-            </text>
-          </g>
-        );
-      })}
-    </svg>
+          ) : (
+            <FolderColumn
+              folderFiles={folderFiles}
+              recursive={recursive}
+              items={items}
+              progress={progress}
+              batchRunning={batchRunning}
+              reviewThreshold={conf}
+              agg={aggForBatch}
+              onFolderDrop={onFolderDrop}
+              onFolderClear={onFolderClear}
+            />
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
-function ResultBadges({ result }: { result: InferenceResponse }) {
+// --- Page-local sub-components -----------------------------------------
+
+function ModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: Mode;
+  onChange: (next: Mode) => void;
+}) {
   return (
-    <div className="flex flex-col items-end gap-1">
-      <Badge tone="clinical">
-        <Cpu className="mr-1 size-3" />
-        {result.accelerator.kind.toUpperCase()}
-      </Badge>
-      <Badge tone="subtle">
-        <Timer className="mr-1 size-3" />
-        {result.inference_ms.toFixed(0)} ms
-      </Badge>
+    <div className="flex gap-1 rounded-lg border border-surface-muted bg-surface-subtle p-1">
+      <button
+        type="button"
+        onClick={() => onChange("single")}
+        className={cn(
+          "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition",
+          mode === "single"
+            ? "bg-surface text-ink shadow-xs"
+            : "text-ink-muted hover:text-ink",
+        )}
+      >
+        <ImageIcon className="size-4" /> Single
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("folder")}
+        className={cn(
+          "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition",
+          mode === "folder"
+            ? "bg-surface text-ink shadow-xs"
+            : "text-ink-muted hover:text-ink",
+        )}
+      >
+        <FolderOpen className="size-4" /> Folder
+      </button>
     </div>
   );
 }
 
-function DetectionPanel({ result }: { result: DetectionResponse }) {
-  const counts = Object.entries(result.counts_per_class).sort((a, b) => b[1] - a[1]);
+interface ControlCardProps {
+  isClassify: boolean;
+  selectedTask: Task | undefined;
+  selectedModel: string | undefined;
+  modelOptions: { value: string; label: string }[];
+  modelsLoading: boolean;
+  onSelectModel: (v: string) => void;
+  conf: number;
+  onConfChange: (v: number) => void;
+  iou: number;
+  onIouChange: (v: number) => void;
+  mode: Mode;
+  recursive: boolean;
+  onRecursiveChange: (v: boolean) => void;
+  canRunSingle: boolean;
+  singlePending: boolean;
+  singleError: unknown;
+  onRunSingle: () => void;
+  onClearSingle: () => void;
+  singleFilePresent: boolean;
+  canRunBatch: boolean;
+  batchRunning: boolean;
+  progress: { current: number; total: number } | null;
+  folderFileCount: number;
+  onRunBatch: () => void;
+  onCancelBatch: () => void;
+  onClearFolder: () => void;
+}
+
+function ControlCard(props: ControlCardProps) {
+  const {
+    isClassify,
+    selectedTask,
+    selectedModel,
+    modelOptions,
+    modelsLoading,
+    onSelectModel,
+    conf,
+    onConfChange,
+    iou,
+    onIouChange,
+    mode,
+    recursive,
+    onRecursiveChange,
+    canRunSingle,
+    singlePending,
+    singleError,
+    onRunSingle,
+    onClearSingle,
+    singleFilePresent,
+    canRunBatch,
+    batchRunning,
+    progress,
+    folderFileCount,
+    onRunBatch,
+    onCancelBatch,
+    onClearFolder,
+  } = props;
+
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Sparkles className="size-4 text-accent" />
-              Detection results
-            </CardTitle>
-            <CardDescription>
-              {result.boxes.length === 0
-                ? "No objects above the current confidence threshold."
-                : `${result.boxes.length} detection${result.boxes.length === 1 ? "" : "s"} across ${counts.length} class${counts.length === 1 ? "" : "es"}.`}
-            </CardDescription>
-          </div>
-          <ResultBadges result={result} />
-        </div>
+        <CardTitle className="flex items-center gap-2">
+          {isClassify ? (
+            <Brain className="size-4 text-accent" />
+          ) : (
+            <Microscope className="size-4 text-accent" />
+          )}
+          Model
+        </CardTitle>
+        <CardDescription>
+          {isClassify
+            ? "Classification — full top-5 returned. Slider sets the review threshold."
+            : selectedTask === "detect"
+            ? "Detection — boxes filtered by confidence; IoU drives NMS."
+            : "Pick a detection or classification model to begin."}
+        </CardDescription>
       </CardHeader>
-      <CardContent>
-        {counts.length === 0 ? null : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs font-medium uppercase tracking-wide text-ink-muted">
-                <th className="pb-2">Class</th>
-                <th className="pb-2 text-right">Count</th>
-                <th className="pb-2 text-right">Max conf</th>
-              </tr>
-            </thead>
-            <tbody>
-              {counts.map(([className, count]) => {
-                const maxConf = Math.max(
-                  ...result.boxes
-                    .filter((b) => b.class_name === className)
-                    .map((b) => b.conf),
-                );
-                const colour =
-                  PALETTE[
-                    (result.boxes.find((b) => b.class_name === className)?.class_id ?? 0) %
-                      PALETTE.length
-                  ];
-                return (
-                  <tr key={className} className="border-t border-surface-muted text-ink">
-                    <td className="py-2.5">
-                      <span className="flex items-center gap-2">
-                        <span
-                          className="size-2.5 rounded-full"
-                          style={{ background: colour }}
-                          aria-hidden="true"
-                        />
-                        {className}
-                      </span>
-                    </td>
-                    <td className="py-2.5 text-right font-medium tabular-nums">{count}</td>
-                    <td className="py-2.5 text-right tabular-nums text-ink-muted">
-                      {(maxConf * 100).toFixed(1)}%
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      <CardContent className="space-y-4">
+        <Select
+          label="Model"
+          value={selectedModel}
+          options={modelOptions}
+          onChange={onSelectModel}
+          placeholder={modelsLoading ? "Loading…" : "Pick a model"}
+          emptyText="No models — run scripts/fetch-models.py"
+        />
+        <Slider
+          label={isClassify ? "Review threshold" : "Confidence"}
+          value={conf}
+          min={0.05}
+          max={0.95}
+          step={0.01}
+          onChange={onConfChange}
+          hint={
+            isClassify
+              ? "Top-1 predictions below this score are flagged for manual review."
+              : "Boxes below this score are hidden from results."
+          }
+        />
+        {isClassify ? null : (
+          <Slider
+            label="IoU"
+            value={iou}
+            min={0.1}
+            max={0.95}
+            step={0.01}
+            onChange={onIouChange}
+            hint="Non-maximum-suppression threshold for overlapping boxes."
+          />
         )}
+        {mode === "single" ? (
+          <div className="flex gap-2 pt-2">
+            <Button className="flex-1" disabled={!canRunSingle} onClick={onRunSingle}>
+              {singlePending ? (
+                <>
+                  <Spinner /> Running…
+                </>
+              ) : (
+                <>
+                  <Play className="size-4" /> Run inference
+                </>
+              )}
+            </Button>
+            <Button variant="ghost" disabled={!singleFilePresent} onClick={onClearSingle}>
+              <X className="size-4" />
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-2 pt-2">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+              <input
+                type="checkbox"
+                checked={recursive}
+                onChange={(e) => onRecursiveChange(e.target.checked)}
+                className="accent-accent"
+              />
+              Walk subfolders (recursive)
+            </label>
+            <div className="flex gap-2">
+              {batchRunning ? (
+                <Button className="flex-1" variant="destructive" onClick={onCancelBatch}>
+                  <StopCircle className="size-4" /> Stop ({progress?.current ?? 0}/
+                  {progress?.total ?? 0})
+                </Button>
+              ) : (
+                <Button className="flex-1" disabled={!canRunBatch} onClick={onRunBatch}>
+                  <Play className="size-4" /> Run on {folderFileCount} image
+                  {folderFileCount === 1 ? "" : "s"}
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                disabled={folderFileCount === 0 || batchRunning}
+                onClick={onClearFolder}
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+        {mode === "single" && singleError ? (
+          <p className="text-xs text-red-700">
+            {singleError instanceof Error
+              ? singleError.message
+              : "Inference failed. Check the backend log."}
+          </p>
+        ) : null}
+        <div className="flex items-center gap-2 border-t border-surface-muted pt-3 text-xs text-ink-muted">
+          <Gauge className="size-3.5" />
+          Sliders re-run on next click — live update lands in P3b polish.
+        </div>
       </CardContent>
     </Card>
   );
 }
 
-function ClassificationPanel({
-  result,
+function SingleColumn({
+  previewUrl,
+  singleFile,
+  singleResult,
+  showOverlay,
   reviewThreshold,
+  onSingleDrop,
+  onSingleClear,
 }: {
-  result: ClassificationResponse;
+  previewUrl: string | null;
+  singleFile: File | null;
+  singleResult: InferenceResponse | null;
+  showOverlay: boolean;
   reviewThreshold: number;
+  onSingleDrop: (next: File) => void;
+  onSingleClear: () => void;
 }) {
-  const needsReview = result.top1.conf < reviewThreshold;
-  const chartData = result.top5.map((p) => ({
-    name: p.class_name,
-    value: p.conf,
-    fill: colourFor(p.class_id),
-  }));
+  const imageSize = singleResult?.image_size;
+  return (
+    <>
+      {!previewUrl ? (
+        <Dropzone onFile={onSingleDrop} />
+      ) : (
+        <Card>
+          <CardHeader>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <CardTitle className="truncate">{singleFile?.name}</CardTitle>
+                <CardDescription>
+                  {singleResult
+                    ? `${singleResult.image_size[0]} × ${singleResult.image_size[1]} px · model ${singleResult.model}`
+                    : "Click ‘Run inference’ when ready."}
+                </CardDescription>
+              </div>
+              <Button variant="ghost" size="sm" onClick={onSingleClear}>
+                <X className="size-4" /> Replace
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="relative inline-block max-h-[70vh] max-w-full overflow-hidden rounded-lg border border-surface-muted bg-black/3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={previewUrl}
+                alt={singleFile?.name ?? "Selected patch"}
+                className="block max-h-[70vh] max-w-full object-contain"
+              />
+              {showOverlay && singleResult && imageSize ? (
+                <BoxOverlay
+                  boxes={(singleResult as DetectionResponse).boxes}
+                  imageW={imageSize[0]}
+                  imageH={imageSize[1]}
+                />
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      {singleResult?.task === "detect" ? <SingleDetectionPanel result={singleResult} /> : null}
+      {singleResult?.task === "classify" ? (
+        <SingleClassificationPanel result={singleResult} reviewThreshold={reviewThreshold} />
+      ) : null}
+      {!singleResult && previewUrl ? (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-ink-muted">
+            Ready when you are — click{" "}
+            <span className="font-medium text-ink">Run inference</span> to send the image
+            to{" "}
+            <code className="rounded bg-surface-muted px-1.5 py-0.5 text-xs">
+              /api/inference/single
+            </code>
+            .
+          </CardContent>
+        </Card>
+      ) : null}
+    </>
+  );
+}
+
+function FolderColumn({
+  folderFiles,
+  recursive,
+  items,
+  progress,
+  batchRunning,
+  reviewThreshold,
+  agg,
+  onFolderDrop,
+  onFolderClear,
+}: {
+  folderFiles: File[];
+  recursive: boolean;
+  items: BatchResultItem[];
+  progress: { current: number; total: number } | null;
+  batchRunning: boolean;
+  reviewThreshold: number;
+  agg: BatchAggregate | null;
+  onFolderDrop: (files: File[]) => void;
+  onFolderClear: () => void;
+}) {
+  if (!folderFiles.length) {
+    return <FolderDropzone onFolder={onFolderDrop} recursive={recursive} />;
+  }
+  const pct = progress ? (progress.current / Math.max(progress.total, 1)) * 100 : 0;
+  const successCount = items.filter((i) => i.result !== null).length;
+  const failedCount = items.filter((i) => i.result === null).length;
 
   return (
-    <div className="flex flex-col gap-4">
+    <>
       <Card>
         <CardHeader>
           <div className="flex items-start justify-between gap-3">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <Sparkles className="size-4 text-accent" />
-                Classification result
+                <FolderOpen className="size-4 text-accent" />
+                Folder
               </CardTitle>
               <CardDescription>
-                Top-1 prediction over the model&apos;s {result.top5.length}-class output.
+                {folderFiles.length} image{folderFiles.length === 1 ? "" : "s"} queued ·{" "}
+                {recursive ? "recursive" : "top-level only"}.
               </CardDescription>
             </div>
-            <ResultBadges result={result} />
+            <Button variant="ghost" size="sm" disabled={batchRunning} onClick={onFolderClear}>
+              <X className="size-4" /> Reset
+            </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex items-baseline gap-3">
-            <span
-              className="size-4 rounded-full"
-              style={{ background: colourFor(result.top1.class_id) }}
-              aria-hidden="true"
-            />
-            <h3 className="text-3xl font-semibold tracking-tight">
-              {result.top1.class_name}
-            </h3>
-            <span className="text-2xl font-medium tabular-nums text-ink-muted">
-              {(result.top1.conf * 100).toFixed(1)}%
-            </span>
-          </div>
-          {needsReview ? (
-            <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              <AlertTriangle className="size-4" />
-              Top-1 confidence is below the review threshold
-              ({(reviewThreshold * 100).toFixed(0)}%) — flag for manual review.
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Top-5 alternatives</CardTitle>
-          <CardDescription>
-            Class probabilities from the softmax head. Sorted high → low.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="h-[260px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={chartData}
-                layout="vertical"
-                margin={{ top: 8, right: 32, left: 0, bottom: 8 }}
-              >
-                <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke="oklch(92% 0 0)" />
-                <XAxis
-                  type="number"
-                  domain={[0, 1]}
-                  tickFormatter={(v) => `${Math.round(v * 100)}%`}
-                  tick={{ fontSize: 12, fill: "oklch(48% 0 0)" }}
-                  stroke="oklch(92% 0 0)"
-                />
-                <YAxis
-                  type="category"
-                  dataKey="name"
-                  width={140}
-                  tick={{ fontSize: 12, fill: "oklch(18% 0 0)" }}
-                  stroke="oklch(92% 0 0)"
-                />
-                <Tooltip
-                  cursor={{ fill: "oklch(94% 0.04 250 / 0.5)" }}
-                  formatter={(v: number) => `${(v * 100).toFixed(2)}%`}
-                  labelFormatter={(name: string) => name}
-                />
-                <Bar dataKey="value" radius={[0, 6, 6, 0]}>
-                  {chartData.map((d, i) => (
-                    <Cell key={i} fill={d.fill} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-export default function PredictPage() {
-  const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
-  const [conf, setConf] = useState(0.25);
-  const [iou, setIou] = useState(0.45);
-  const [result, setResult] = useState<InferenceResponse | null>(null);
-
-  const { data, isLoading: modelsLoading } = useQuery({
-    queryKey: ["models"],
-    queryFn: fetchModels,
-  });
-
-  const allModels = data?.models ?? [];
-
-  // Derive task from the currently selected model so the UI can switch
-  // between detection-shaped and classification-shaped views.
-  const selectedTask: Task | undefined = useMemo(
-    () => allModels.find((m) => m.name === selectedModel)?.task,
-    [allModels, selectedModel],
-  );
-
-  // Default-model selection: prefer the user's saved detect default; fall
-  // back to the first model in the registry (either task).
-  useEffect(() => {
-    if (selectedModel || allModels.length === 0) return;
-    const def = data?.defaults.detect ?? data?.defaults.classify;
-    setSelectedModel(def ?? allModels[0]?.name);
-  }, [data, allModels, selectedModel]);
-
-  useEffect(() => {
-    if (!file) {
-      setPreviewUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(file);
-    setPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
-
-  const run = useMutation({
-    mutationFn: async () => {
-      if (!file || !selectedModel) throw new Error("file and model required");
-      return inferSingle({ image: file, model: selectedModel, conf, iou });
-    },
-    onSuccess: (data) => setResult(data),
-    onError: () => setResult(null),
-  });
-
-  const onDrop = (next: File) => {
-    setFile(next);
-    setResult(null);
-  };
-
-  const onClear = () => {
-    setFile(null);
-    setResult(null);
-    run.reset();
-  };
-
-  const modelOptions = allModels.map((m) => {
-    const taskTag = m.task === "detect" ? "detect" : "classify";
-    return {
-      value: m.name,
-      label: `${m.name}  ·  ${taskTag}  ·  ${m.num_classes} cls  ·  ${formatBytes(m.size_mb)}`,
-    };
-  });
-
-  const canRun = !!file && !!selectedModel && !run.isPending;
-  const isClassify = selectedTask === "classify";
-
-  // Result-derived metadata. For classify the SVG overlay is skipped
-  // entirely; the image renders as-is and the panel shows top-1 / top-5.
-  const resultImageSize = result?.image_size;
-  const showOverlay = result?.task === "detect";
-
-  return (
-    <section className="flex h-full flex-col gap-8 px-12 py-12">
-      <header>
-        <p className="text-sm font-medium uppercase tracking-[0.2em] text-ink-muted">
-          Predict · Detection &amp; Classification
-        </p>
-        <h1 className="mt-2 text-4xl font-semibold tracking-tight">
-          Run a model on a slide patch.
-        </h1>
-        <p className="mt-3 max-w-2xl text-ink-muted">
-          Drop a single image, pick a YOLO model. The view auto-switches between
-          object detection (boxes + counts) and image classification (top-1 +
-          top-5). Folder batch and clinical reports arrive with P3.
-        </p>
-      </header>
-
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[360px_1fr]">
-        <aside className="flex flex-col gap-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                {isClassify ? (
-                  <Brain className="size-4 text-accent" />
-                ) : (
-                  <Microscope className="size-4 text-accent" />
-                )}
-                Model
-              </CardTitle>
-              <CardDescription>
-                {isClassify
-                  ? "Classification — full top-5 returned. Slider sets the review threshold."
-                  : selectedTask === "detect"
-                  ? "Detection — boxes filtered by confidence; IoU drives NMS."
-                  : "Pick a detection or classification model to begin."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Select
-                label="Model"
-                value={selectedModel}
-                options={modelOptions}
-                onChange={setSelectedModel}
-                placeholder={modelsLoading ? "Loading…" : "Pick a model"}
-                emptyText="No models — run scripts/fetch-models.py"
-              />
-              <Slider
-                label={isClassify ? "Review threshold" : "Confidence"}
-                value={conf}
-                min={0.05}
-                max={0.95}
-                step={0.01}
-                onChange={setConf}
-                hint={
-                  isClassify
-                    ? "Top-1 predictions below this score are flagged for manual review."
-                    : "Boxes below this score are hidden from results."
-                }
-              />
-              {isClassify ? null : (
-                <Slider
-                  label="IoU"
-                  value={iou}
-                  min={0.1}
-                  max={0.95}
-                  step={0.01}
-                  onChange={setIou}
-                  hint="Non-maximum-suppression threshold for overlapping boxes."
-                />
-              )}
-              <div className="flex gap-2 pt-2">
-                <Button className="flex-1" disabled={!canRun} onClick={() => run.mutate()}>
-                  {run.isPending ? (
-                    <>
-                      <Spinner /> Running…
-                    </>
-                  ) : (
-                    <>
-                      <Play className="size-4" /> Run inference
-                    </>
+          {progress ? (
+            <div>
+              <div className="mb-1 flex justify-between text-xs text-ink-muted">
+                <span>
+                  {progress.current} / {progress.total}
+                  {batchRunning ? " · running" : " · done"}
+                </span>
+                <span className="tabular-nums">{pct.toFixed(0)}%</span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-surface-muted">
+                <div
+                  className={cn(
+                    "h-full transition-[width] duration-200",
+                    batchRunning ? "bg-accent" : "bg-clinical",
                   )}
-                </Button>
-                <Button variant="ghost" disabled={!file} onClick={onClear}>
-                  <X className="size-4" />
-                </Button>
+                  style={{ width: `${pct}%` }}
+                />
               </div>
-              {run.isError ? (
-                <p className="text-xs text-red-700">
-                  {run.error instanceof Error
-                    ? run.error.message
-                    : "Inference failed. Check the backend log."}
-                </p>
-              ) : null}
-              <div className="flex items-center gap-2 border-t border-surface-muted pt-3 text-xs text-ink-muted">
-                <Gauge className="size-3.5" />
-                Sliders re-run on next click — live update lands in P3.
+              <div className="mt-2 flex gap-3 text-xs text-ink-muted">
+                {successCount ? (
+                  <span className="inline-flex items-center gap-1">
+                    <CheckCircle2 className="size-3 text-clinical" />
+                    {successCount} ok
+                  </span>
+                ) : null}
+                {failedCount ? (
+                  <span className="inline-flex items-center gap-1 text-red-700">
+                    <AlertTriangle className="size-3" />
+                    {failedCount} failed
+                  </span>
+                ) : null}
               </div>
-            </CardContent>
-          </Card>
-        </aside>
-
-        <div className="flex flex-col gap-4">
-          {!previewUrl ? (
-            <Dropzone onFile={onDrop} />
+            </div>
           ) : (
-            <Card>
-              <CardHeader>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <CardTitle className="truncate">{file?.name}</CardTitle>
-                    <CardDescription>
-                      {result
-                        ? `${result.image_size[0]} × ${result.image_size[1]} px · model ${result.model}`
-                        : "Click ‘Run inference’ when ready."}
-                    </CardDescription>
-                  </div>
-                  <Button variant="ghost" size="sm" onClick={onClear}>
-                    <X className="size-4" /> Replace
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="relative inline-block max-h-[70vh] max-w-full overflow-hidden rounded-lg border border-surface-muted bg-black/3">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={previewUrl}
-                    alt={file?.name ?? "Selected patch"}
-                    className="block max-h-[70vh] max-w-full object-contain"
-                  />
-                  {showOverlay && result && resultImageSize ? (
-                    <BoxOverlay
-                      boxes={(result as DetectionResponse).boxes}
-                      imageW={resultImageSize[0]}
-                      imageH={resultImageSize[1]}
-                    />
-                  ) : null}
-                </div>
-              </CardContent>
-            </Card>
+            <p className="text-sm text-ink-muted">
+              Hit <span className="font-medium text-ink">Run</span> to process the queued
+              images. Sequential on one accelerator — typical pace is ~10 imgs/s on MPS
+              once weights are warm.
+            </p>
           )}
+        </CardContent>
+      </Card>
 
-          {result?.task === "detect" ? <DetectionPanel result={result} /> : null}
-          {result?.task === "classify" ? (
-            <ClassificationPanel result={result} reviewThreshold={conf} />
-          ) : null}
-          {!result && previewUrl ? (
-            <Card>
-              <CardContent className={cn("py-10 text-center text-sm text-ink-muted")}>
-                Ready when you are — click{" "}
-                <span className="font-medium text-ink">Run inference</span> to send the image
-                to{" "}
-                <code className="rounded bg-surface-muted px-1.5 py-0.5 text-xs">
-                  /api/inference/single
-                </code>
-                .
-              </CardContent>
-            </Card>
-          ) : null}
-        </div>
-      </div>
-    </section>
+      {agg ? <BatchAggregatePanel agg={agg} /> : null}
+      <BatchTable items={items} reviewThreshold={reviewThreshold} />
+    </>
   );
 }

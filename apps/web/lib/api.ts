@@ -3,6 +3,7 @@ import type {
   InferenceResponse,
   ModelInfo,
   ModelsListResponse,
+  PresetsListResponse,
   Task,
 } from "./types";
 
@@ -52,6 +53,10 @@ export async function setDefaultModel(task: Task, name: string): Promise<void> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ task, name }),
   });
+}
+
+export async function fetchPresets(): Promise<PresetsListResponse> {
+  return fetchJson(`${API_BASE}/presets`);
 }
 
 export interface InferSingleArgs {
