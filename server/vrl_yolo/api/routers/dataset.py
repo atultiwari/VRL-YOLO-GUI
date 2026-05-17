@@ -16,6 +16,7 @@ from vrl_yolo.engine.dataset import (
     inspect_dataset,
     rename_classes,
     split_dataset,
+    split_imagefolder,
     write_uploaded_dataset,
 )
 from vrl_yolo.paths import resolve_storage_root
@@ -125,24 +126,44 @@ def split_dataset_endpoint(
 ) -> DatasetInfoOut:
     """Reorganise the on-disk dataset into train/valid/test splits.
 
-    Destructive within the dataset's own directory: the existing
-    `train/`, `valid/`, `test/`, `images/`, `labels/` trees are wiped
-    after their contents are staged. data.yaml is rewritten with the
-    new split paths (preserving the user's `names`). The dataset's
-    UUID stays the same so the configure-page store doesn't lose track.
+    Destructive within the dataset's own directory. Dispatches on the
+    detected task so the same endpoint handles both:
 
-    Ratios must sum to 1.0 (±0.001). Test ratio may be 0 — the route
-    will skip writing a `test/` directory in that case.
+    - **Detect** (YOLO/Roboflow/COCO/VOC): re-stage image+label pairs
+      into ``train/{images,labels}`` / ``valid/{images,labels}`` /
+      ``test/{images,labels}``, rewrite ``data.yaml`` with the new
+      split paths and the original class names.
+    - **Classify** (ImageFolder): re-stage class subdirs into
+      ``train/<class>/`` / ``val/<class>/`` / ``test/<class>/``
+      (stratified per class). No ``data.yaml`` — Ultralytics' classify
+      loader reads directly from the directory tree.
+
+    Ratios must sum to 1.0 (±0.001). Test ratio may be 0 — neither
+    splitter writes an empty test/ in that case. The dataset's UUID
+    stays the same so the configure-page store doesn't lose track.
     """
     root = _resolve_dataset_root(dataset_id, settings)
+    # Inspect first to know which splitter to use. Cheaper than running
+    # the wrong one and catching the failure, and clearer 400 if the
+    # caller targeted an unknown layout.
+    current = inspect_dataset(root)
     try:
-        info = split_dataset(
-            root,
-            train_ratio=body.train_ratio,
-            valid_ratio=body.valid_ratio,
-            test_ratio=body.test_ratio,
-            seed=body.seed,
-        )
+        if current.task == "classify":
+            info = split_imagefolder(
+                root,
+                train_ratio=body.train_ratio,
+                valid_ratio=body.valid_ratio,
+                test_ratio=body.test_ratio,
+                seed=body.seed,
+            )
+        else:
+            info = split_dataset(
+                root,
+                train_ratio=body.train_ratio,
+                valid_ratio=body.valid_ratio,
+                test_ratio=body.test_ratio,
+                seed=body.seed,
+            )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

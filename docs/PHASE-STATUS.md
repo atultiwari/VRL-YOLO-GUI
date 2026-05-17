@@ -1,7 +1,7 @@
 # Phase Status
 
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones).
-> Updated at the end of each phase boundary. **Last edit: 2026-05-17 (P5.fix-2 — window-scoped close filter).**
+> Updated at the end of each phase boundary. **Last edit: 2026-05-18 (P5.fix-3 — flat ImageFolder + classify splitter + layout examples).**
 
 ## Snapshot
 
@@ -23,6 +23,7 @@
 | **P5 — Train (Classification)** | ✅ done | `v0.8-p5-train-classify` | `1d104f7` |
 | P5.fix-1 — macOS Cmd+Q event-filter shutdown (regressed startup; superseded by P5.fix-2) | ⚠️ superseded | `v0.8.1` | `543b40d` |
 | P5.fix-2 — Window-scoped close filter | ✅ done | `v0.8.2` | `5bc93cc` |
+| P5.fix-3 — Flat ImageFolder + classify splitter + layout examples | ✅ done | `v0.8.3` | `0000000` |
 | P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
@@ -458,6 +459,48 @@ step: QEvent.Close intercepted — bypassing static-destructor crash via os._exi
 - Same as P5.fix-1: in-flight training subprocess does not receive a SIGTERM before `os._exit(0)`. Follow-up.
 - The 4-deep `_window` walk is a band-aid for Pyloid's internal nesting depth. If a future Pyloid release changes that, the launch.log prints `macOS shutdown workaround skipped — could not locate underlying QMainWindow on 'BrowserWindow'` and the old crash returns. Worth a heads-up before any Pyloid bump.
 - Upstream `python-pyloid-desktop-packaging` skill now needs TWO updates: (a) `aboutToQuit` alone is insufficient on macOS 26.x with Pyloid 0.27, (b) NEVER install an event filter on QApplication when QWebEngineView is in play — use a window-scoped filter instead.
+
+### ✅ P5.fix-3 — Flat ImageFolder + classify splitter + layout examples · `v0.8.3` · `0000000`
+
+**Trigger:** the first real classification dataset (a 3-class lung-pathology subset at `/Users/atultiwari/Downloads/Projects/Datasets/lung_colon_image_set/lung_partial`) failed to import. The folder structure was `lung_partial/{lung_aca,lung_n,lung_scc}/*.jpeg` — class subfolders directly under the root, no `train/` wrapper. v0.8.0–v0.8.2's inspector required the `train/<class>/*` layout exclusively, so the flat layout fell through to "Unknown layout" and the Continue button was permanently gated off.
+
+**Two-pronged fix** (the gap was both code and UX):
+
+| # | Subject | Outcome |
+|---|---|---|
+| P5.fix-3.1 | Backend: recognise flat ImageFolder + add classify splitter | `engine/dataset.py::_try_imagefolder` split into two helpers — `_imagefolder_split_layout` (existing `train/<class>/`) and `_imagefolder_flat_layout` (new: `<class>/*` direct under root). Flat layout returns a single "all" pseudo-split + warning saying training needs the splitter to run first. Added `split_imagefolder(root, train_ratio, valid_ratio, test_ratio, seed)` that stratifies per class and stages into `train/<class>/`, `val/<class>/`, optionally `test/<class>/` — same staging-dir safety as `split_dataset`. `POST /api/datasets/{id}/split` now dispatches on `dataset.task` so the same endpoint handles both flavours. |
+| P5.fix-3.2 | Frontend: layout examples + classify-aware split modal | New `LayoutExamplesCard` on `/train/dataset` — collapsible, default-open, persists state via `localStorage`. Shows 4 concrete ASCII trees (Roboflow YOLO, plain YOLO, flat ImageFolder, split ImageFolder) with per-layout descriptions and "what to do next" hints. `needsSplitting()` extended to flag flat ImageFolder (single "all" split) and classify split-layouts missing val/. `SplitModal` copy switches per task: detect users see `data.yaml` rewrite copy, classify users see `train/<class>/` / `val/<class>/` paths and the warning that classify mode refuses to start without val. Fixed `totalPairs` collapsing to 0 for classify (was using `Math.min(image_count, label_count)`; ImageFolder splits have `label_count: 0`). |
+| P5.fix-3.3 | End-to-end test against lung_partial | Copied the user's actual dataset to a temp dir, ran inspect → split → re-inspect → real 1-epoch YOLO26n-cls training via in-process `JobManager`. All four steps passed: inspector correctly tagged flat ImageFolder with 3 classes × 10 images each, splitter stratified into train=8+val=1+test=1 per class (24/3/3 total), Ultralytics consumed the rearranged layout and emitted `top1=0.33 / top5=1.00`. |
+
+**Verification (against `/Users/atultiwari/Downloads/Projects/Datasets/lung_colon_image_set/lung_partial`):**
+
+```
+=== Inspect (flat) ===
+format = imagefolder
+task   = classify
+classes = ('lung_aca', 'lung_n', 'lung_scc')
+class_counts = {'lung_aca': 10, 'lung_n': 10, 'lung_scc': 10}
+splits = [('all', 30)]
+warnings:
+  - Flat ImageFolder layout — class folders at the root. Use Prepare
+    splits to stage into train/val/test before training ...
+
+=== split_imagefolder 80/10/10 ===
+splits = [('train', 24), ('val', 3), ('test', 3)]
+on-disk:
+  train/: {'lung_aca': 8, 'lung_n': 8, 'lung_scc': 8}
+  val/:   {'lung_aca': 1, 'lung_n': 1, 'lung_scc': 1}
+  test/:  {'lung_aca': 1, 'lung_n': 1, 'lung_scc': 1}
+
+=== classify training (YOLO26n-cls @ 64px, 1 epoch, MPS) ===
+status: completed
+metrics: top1=0.333, top5=1.000
+best_pt: <storage>/training/<job>/weights/best.pt
+```
+
+**Carried-forward:**
+- Layout examples are static ASCII trees. A future polish pass could swap for SVG or render real previews of the user's dropped folder.
+- Splitter is all-or-nothing: it merges ALL source images (flat + any pre-existing splits) and re-shuffles. If a user wants to PRESERVE a hand-curated train/val and just generate a missing test, they can't. Acceptable for v1; revisit if pilot feedback asks.
 
 ---
 

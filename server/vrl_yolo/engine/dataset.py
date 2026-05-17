@@ -401,19 +401,52 @@ def _try_voc(dataset_id: str, root: Path) -> DatasetInfo | None:
 
 
 def _try_imagefolder(dataset_id: str, root: Path) -> DatasetInfo | None:
-    """ImageFolder: train/<classname>/*.jpg with no labels/."""
-    train_dir = root / "train"
-    if not train_dir.is_dir():
-        return None
-    class_dirs = [p for p in train_dir.iterdir() if p.is_dir()]
-    if not class_dirs:
-        return None
-    # If there's a labels/ alongside images/, this is YOLO, not ImageFolder.
-    if (train_dir / "labels").is_dir() or (train_dir / "images").is_dir():
-        return None
+    """ImageFolder for classification — accepts two layouts.
 
+    **Split layout** (Ultralytics-ready, what Roboflow's classification
+    export produces, what `split_imagefolder` writes)::
+
+        <root>/
+        ├── train/
+        │   ├── classA/img.jpg
+        │   └── classB/img.jpg
+        ├── val/   (or valid/, validation/ — optional but recommended)
+        │   └── ...
+        └── test/  (optional)
+            └── ...
+
+    **Flat layout** (the human-friendly one — what doctors usually drop
+    in from `<classname>/<image>.jpg`)::
+
+        <root>/
+        ├── classA/img.jpg
+        └── classB/img.jpg
+
+    The flat layout is recognised here but flagged with a warning that
+    says training won't start until it's split — the wizard surfaces
+    "Prepare splits…" which calls `split_imagefolder` to stage into the
+    Ultralytics-ready layout.
+    """
+    # --- Layout A: split — train/<class>/*.jpg --------------------------
+    train_dir = root / "train"
+    if train_dir.is_dir():
+        # Reject train/images + train/labels — that's plain YOLO, not classify.
+        if (train_dir / "labels").is_dir() or (train_dir / "images").is_dir():
+            return None
+        class_dirs = [p for p in train_dir.iterdir() if p.is_dir()]
+        if class_dirs:
+            return _imagefolder_split_layout(dataset_id, root, class_dirs)
+
+    # --- Layout B: flat — <class>/*.jpg ---------------------------------
+    return _imagefolder_flat_layout(dataset_id, root)
+
+
+def _imagefolder_split_layout(
+    dataset_id: str, root: Path, train_class_dirs: list[Path]
+) -> DatasetInfo:
+    """Inspector for a pre-split ImageFolder (train/<class>/* present)."""
     class_counts: dict[str, int] = {}
-    for cd in class_dirs:
+    for cd in train_class_dirs:
         class_counts[cd.name] = sum(
             1 for p in cd.iterdir() if p.suffix.lower() in _IMAGE_EXT
         )
@@ -430,11 +463,10 @@ def _try_imagefolder(dataset_id: str, root: Path) -> DatasetInfo | None:
     warnings: list[str] = []
     if val_split is None:
         warnings.append(
-            "No val/ or valid/ split found — Ultralytics will fall back to "
-            "splitting train/ internally, but adding an explicit "
-            "val/<class>/*.jpg layout gives you stable top-1/top-5 metrics."
+            "No val/ split found — Ultralytics' classify mode wants val/<class>/*. "
+            "Use Prepare splits to re-stage."
         )
-    if len(class_dirs) < 2:
+    if len(train_class_dirs) < 2:
         warnings.append(
             "Only one class folder under train/ — classification needs at "
             "least 2 classes to learn anything meaningful."
@@ -445,6 +477,60 @@ def _try_imagefolder(dataset_id: str, root: Path) -> DatasetInfo | None:
         task="classify",
         root_path=root,
         splits=tuple(splits),
+        classes=tuple(sorted(class_counts.keys())),
+        class_counts=class_counts,
+        warnings=tuple(warnings),
+    )
+
+
+def _imagefolder_flat_layout(dataset_id: str, root: Path) -> DatasetInfo | None:
+    """Inspector for a flat ImageFolder (root/<class>/*.jpg, no train/)."""
+    # Class candidates: any direct-child dir that holds at least one image.
+    # Skip our own staging dir + Roboflow's README-style sidecars + the
+    # split-layout dirs (train/val/...) since those would have been picked
+    # up by `_imagefolder_split_layout` above.
+    reserved_split_names = {"train", "val", "valid", "validation", "test"}
+    candidate_dirs = [
+        p
+        for p in root.iterdir()
+        if p.is_dir()
+        and not p.name.startswith(".")
+        and p.name != _STAGING_DIR_NAME
+        and p.name.lower() not in reserved_split_names
+    ]
+    # Reject if any candidate looks YOLO-shaped (images/ + labels/ sibling).
+    if any((p / "labels").is_dir() or (p / "images").is_dir() for p in candidate_dirs):
+        return None
+
+    class_counts: dict[str, int] = {}
+    for cd in candidate_dirs:
+        n = sum(1 for p in cd.iterdir() if p.is_file() and p.suffix.lower() in _IMAGE_EXT)
+        if n > 0:
+            class_counts[cd.name] = n
+
+    if not class_counts:
+        return None  # No class dirs with images — not an ImageFolder.
+
+    total = sum(class_counts.values())
+    warnings: list[str] = [
+        "Flat ImageFolder layout — class folders at the root. Use Prepare splits "
+        "to stage into train/val/test before training (Ultralytics' classify mode "
+        "needs that shape).",
+    ]
+    if len(class_counts) < 2:
+        warnings.append(
+            "Only one class folder detected — classification needs at least 2 "
+            "classes to learn anything meaningful."
+        )
+
+    return DatasetInfo(
+        id=dataset_id,
+        format="imagefolder",
+        task="classify",
+        root_path=root,
+        # Surface a single "all" pseudo-split so the wizard's stat table
+        # shows the right totals; the splitter writes the real splits.
+        splits=(DatasetSplit("all", total, total),),
         classes=tuple(sorted(class_counts.keys())),
         class_counts=class_counts,
         warnings=tuple(warnings),
@@ -761,6 +847,169 @@ def split_dataset(
     )
 
     return inspect_dataset(dataset_root)
+
+
+def split_imagefolder(
+    dataset_root: Path,
+    *,
+    train_ratio: float,
+    valid_ratio: float,
+    test_ratio: float,
+    seed: int = 42,
+) -> DatasetInfo:
+    """Reorganise an ImageFolder dataset into clean train/val/test splits.
+
+    Mirrors :func:`split_dataset` but for classification — Ultralytics'
+    classify mode expects ``<root>/train/<class>/`` (and optionally
+    ``val/<class>/``, ``test/<class>/``) and there is no ``data.yaml``.
+
+    Accepts three input shapes — all flattened to ``(class_name,
+    image_path)`` tuples and re-distributed per class:
+
+    - **Flat** at root: ``<root>/<class>/*.jpg``.
+    - **Split** at root: ``<root>/train/<class>/*.jpg`` (+ optional ``val/``,
+      ``valid/``, ``validation/``, ``test/``).
+    - Mix of both (rare; collected from wherever they sit).
+
+    Stratified per class — each split gets roughly the same per-class
+    proportion, so a class with 10 images doesn't accidentally land 9 in
+    val and 1 in train. Stages everything inside ``__vrl-split-staging__``
+    so a crash mid-move never leaves a half-split dataset behind.
+
+    Output uses ``val/`` (not ``valid/``) because that's the canonical
+    name Ultralytics' ClassificationDataset loader expects.
+    """
+    if not dataset_root.is_dir():
+        raise FileNotFoundError(dataset_root)
+
+    total = train_ratio + valid_ratio + test_ratio
+    if abs(total - 1.0) > 1e-3:
+        raise ValueError(f"ratios must sum to 1.0; got {total:.3f}")
+    if train_ratio <= 0:
+        raise ValueError("train_ratio must be > 0")
+    for name, r in (
+        ("train_ratio", train_ratio),
+        ("valid_ratio", valid_ratio),
+        ("test_ratio", test_ratio),
+    ):
+        if r < 0 or r > 1:
+            raise ValueError(f"{name} must be in [0, 1]; got {r}")
+
+    by_class = _collect_imagefolder_images(dataset_root)
+    if not by_class:
+        raise ValueError(
+            "no class folders with images found — expected <root>/<class>/*.jpg "
+            "or <root>/train/<class>/*.jpg"
+        )
+    if len(by_class) < 2:
+        raise ValueError(
+            "only one class folder found — classification needs at least 2 classes"
+        )
+
+    rng = random.Random(seed)
+    # `assignments[class_name] = {"train": [...], "val": [...], "test": [...]}`
+    assignments: dict[str, dict[str, list[Path]]] = {}
+    for class_name, paths in sorted(by_class.items()):
+        shuffled = list(paths)
+        rng.shuffle(shuffled)
+        n = len(shuffled)
+        n_train = int(round(n * train_ratio))
+        n_valid = int(round(n * valid_ratio))
+        # Per-class minimums: guarantee at least one in train if any image
+        # exists, so an unbalanced ratio (e.g. 0.95/0.05/0) on a small
+        # class doesn't leave train empty for that class.
+        n_train = max(1, min(n_train, n))
+        n_valid = min(n_valid, n - n_train)
+        n_test = n - n_train - n_valid
+        assignments[class_name] = {
+            "train": shuffled[:n_train],
+            "val": shuffled[n_train : n_train + n_valid],
+            "test": shuffled[n_train + n_valid : n_train + n_valid + n_test],
+        }
+
+    staging = dataset_root / _STAGING_DIR_NAME
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir()
+
+    try:
+        for class_name, splits in assignments.items():
+            for split_name, paths in splits.items():
+                if not paths:
+                    continue
+                dest_dir = staging / split_name / class_name
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                for img in paths:
+                    _safe_move(img, dest_dir / img.name)
+
+        # Wipe the OLD top-level layout (the flat class dirs OR the
+        # previous train/val/test) — preserve only readme-style files.
+        for entry in list(dataset_root.iterdir()):
+            if entry.name == _STAGING_DIR_NAME:
+                continue
+            if entry.is_file():
+                if entry.name in _PRESERVED_ROOT_FILES:
+                    continue
+                entry.unlink()
+            elif entry.is_dir():
+                shutil.rmtree(entry)
+
+        # Promote staging contents.
+        for entry in list(staging.iterdir()):
+            shutil.move(str(entry), str(dataset_root / entry.name))
+        shutil.rmtree(staging)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+    return inspect_dataset(dataset_root)
+
+
+def _collect_imagefolder_images(root: Path) -> dict[str, list[Path]]:
+    """Walk every plausible class-dir location and group image paths by class.
+
+    Looks in (in order):
+
+    1. ``<root>/<class>/*.jpg`` (flat layout — what humans drop)
+    2. ``<root>/train/<class>/*.jpg``
+    3. ``<root>/val/<class>/*.jpg`` (and ``valid``, ``validation``)
+    4. ``<root>/test/<class>/*.jpg``
+
+    Images from all sources are merged per-class — the splitter doesn't
+    care if a dataset was previously split unevenly; it re-shuffles from
+    scratch using the seed.
+    """
+    by_class: dict[str, list[Path]] = {}
+    reserved = {"train", "val", "valid", "validation", "test"}
+
+    def _add_images(class_dir: Path) -> None:
+        files = [
+            p for p in class_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in _IMAGE_EXT
+        ]
+        if files:
+            by_class.setdefault(class_dir.name, []).extend(files)
+
+    # Flat layout
+    for entry in root.iterdir():
+        if (
+            entry.is_dir()
+            and not entry.name.startswith(".")
+            and entry.name != _STAGING_DIR_NAME
+            and entry.name.lower() not in reserved
+        ):
+            _add_images(entry)
+
+    # Split layout
+    for split_name in ("train", "val", "valid", "validation", "test"):
+        split_dir = root / split_name
+        if not split_dir.is_dir():
+            continue
+        for class_dir in split_dir.iterdir():
+            if class_dir.is_dir() and not class_dir.name.startswith("."):
+                _add_images(class_dir)
+
+    return by_class
 
 
 def _safe_move(src: Path, dst: Path) -> None:

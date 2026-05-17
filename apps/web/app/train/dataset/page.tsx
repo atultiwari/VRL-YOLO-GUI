@@ -5,8 +5,11 @@ import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Database,
   FolderOpen,
+  HelpCircle,
   Scissors,
   X,
 } from "lucide-react";
@@ -198,7 +201,12 @@ function UploadStage({
     // images; "images" mode would silently drop data.yaml + the label
     // files, which is the v0.6.0 regression that made every Roboflow
     // dataset show up as "Unknown layout".
-    return <FolderDropzone onFolder={onFolder} recursive mode="any" />;
+    return (
+      <div className="space-y-4">
+        <FolderDropzone onFolder={onFolder} recursive mode="any" />
+        <LayoutExamplesCard />
+      </div>
+    );
   }
   return (
     <Card>
@@ -274,12 +282,24 @@ function hasValidationSplit(dataset: DatasetInfo): boolean {
 }
 
 function needsSplitting(dataset: DatasetInfo): boolean {
-  // Surface the splitter only for detect datasets — classify uses
-  // ImageFolder which has its own val/<class>/ convention, and our
-  // splitter rewrites data.yaml (irrelevant for classify).
-  if (dataset.task !== "detect") return false;
+  // Surface the splitter when training would fail without restructuring:
+  //
+  //   - Detect, no val/ split: Ultralytics won't compute mAP.
+  //   - Classify ImageFolder, flat layout (single "all" split): no
+  //     train/val/test subdirs at all → Ultralytics' classify mode
+  //     refuses to start. The backend tags this case with a single
+  //     pseudo-split named "all"; treat its presence as the signal.
+  //   - Classify ImageFolder, split layout but missing val: same as
+  //     detect — surface the splitter so the user can re-stage.
   if (dataset.format === "unknown") return false;
-  return !hasValidationSplit(dataset);
+  if (dataset.task === "detect") {
+    return !hasValidationSplit(dataset);
+  }
+  if (dataset.task === "classify") {
+    const isFlat = dataset.splits.some((s) => s.name === "all");
+    return isFlat || !hasValidationSplit(dataset);
+  }
+  return false;
 }
 
 function DatasetSummary({
@@ -478,10 +498,20 @@ function SplitModal({
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const totalPairs = useMemo(
-    () => dataset.splits.reduce((acc, s) => acc + Math.min(s.image_count, s.label_count), 0),
-    [dataset],
-  );
+  // For detect we count image+label pairs (whichever side is smaller);
+  // for classify we just count images (no labels — the dirname is the
+  // class). Using min() everywhere would have collapsed classify totals
+  // to 0 because label_count = 0 for ImageFolder splits.
+  const isClassify = dataset.task === "classify";
+  const totalPairs = useMemo(() => {
+    if (isClassify) {
+      return dataset.splits.reduce((acc, s) => acc + s.image_count, 0);
+    }
+    return dataset.splits.reduce(
+      (acc, s) => acc + Math.min(s.image_count, s.label_count),
+      0,
+    );
+  }, [dataset, isClassify]);
 
   const onTrainChange = (v: number) => {
     const next = Math.max(1, Math.min(99, Math.round(v)));
@@ -539,13 +569,28 @@ function SplitModal({
             <div>
               <CardTitle className="flex items-center gap-2">
                 <Scissors className="size-4 text-accent" />
-                Prepare train / valid / test splits
+                {isClassify
+                  ? "Prepare train / val / test splits"
+                  : "Prepare train / valid / test splits"}
               </CardTitle>
               <CardDescription>
-                Reshuffles every image+label pair in this dataset into a
-                fresh Roboflow-shaped layout and rewrites data.yaml. The
-                operation is destructive within the dataset&apos;s upload
-                directory — re-upload if you want the original back.
+                {isClassify ? (
+                  <>
+                    Re-stages every image into <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">train/&lt;class&gt;/</code>,{" "}
+                    <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">val/&lt;class&gt;/</code>, and{" "}
+                    <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">test/&lt;class&gt;/</code>{" "}
+                    (stratified per class so each split keeps a balanced ratio).
+                    The operation is destructive within the dataset&apos;s
+                    upload directory — re-upload if you want the original back.
+                  </>
+                ) : (
+                  <>
+                    Reshuffles every image+label pair into a fresh Roboflow-shaped
+                    layout and rewrites <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">data.yaml</code>.
+                    The operation is destructive within the dataset&apos;s upload
+                    directory — re-upload if you want the original back.
+                  </>
+                )}
               </CardDescription>
             </div>
             <Button variant="ghost" size="sm" onClick={onClose} disabled={running}>
@@ -564,14 +609,18 @@ function SplitModal({
             onChange={onTrainChange}
           />
           <Slider
-            label={`Valid (${previewValid} images)`}
+            label={`${isClassify ? "Val" : "Valid"} (${previewValid} images)`}
             value={valid}
             min={0}
             max={100 - train}
             step={1}
             format={(v) => `${v.toFixed(0)}%`}
             onChange={onValidChange}
-            hint="Set to 0 to skip validation (training still runs but no mAP)."
+            hint={
+              isClassify
+                ? "Set to 0 to skip the validation split — but Ultralytics' classify mode WILL refuse to start without it."
+                : "Set to 0 to skip validation (training still runs but no mAP)."
+            }
           />
           <div className="flex items-baseline justify-between text-sm">
             <span className="text-ink">Test</span>
@@ -627,5 +676,150 @@ function Stat({ label, value }: { label: string; value: string }) {
       <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">{label}</p>
       <p className="mt-0.5 text-xl font-semibold tabular-nums text-ink">{value}</p>
     </div>
+  );
+}
+
+interface LayoutExample {
+  title: string;
+  task: "Detection" | "Classification";
+  badge: string;
+  description: string;
+  tree: string;
+  note?: string;
+}
+
+const LAYOUT_EXAMPLES: LayoutExample[] = [
+  {
+    title: "Roboflow YOLO",
+    task: "Detection",
+    badge: "data.yaml + train/valid/test",
+    description:
+      "Most common — what Roboflow's YOLO export ships. We read class names from data.yaml and use the splits as-is.",
+    tree: `my-dataset/
+├── data.yaml          ← class names + split paths
+├── train/
+│   ├── images/        ← *.jpg, *.png, ...
+│   └── labels/        ← matching *.txt (YOLO format)
+├── valid/
+│   ├── images/
+│   └── labels/
+└── test/              ← optional
+    ├── images/
+    └── labels/`,
+  },
+  {
+    title: "Plain YOLO",
+    task: "Detection",
+    badge: "images/ + labels/ (no splits)",
+    description:
+      "Flat layout — one images/ + labels/ pair at the root. The wizard will offer Prepare splits to re-stage into Roboflow shape.",
+    tree: `my-dataset/
+├── images/
+│   ├── img001.jpg
+│   └── img002.jpg
+└── labels/
+    ├── img001.txt
+    └── img002.txt`,
+    note: "Class names aren't embedded — you'll rename them on the next page.",
+  },
+  {
+    title: "ImageFolder (flat)",
+    task: "Classification",
+    badge: "<class>/*.jpg at root",
+    description:
+      "The friendliest layout for classification — one folder per class, images directly inside. The wizard will offer Prepare splits to re-stage into the Ultralytics-ready train/val/test layout.",
+    tree: `my-dataset/
+├── lung_aca/
+│   ├── img001.jpeg
+│   └── img002.jpeg
+├── lung_n/
+│   └── ...
+└── lung_scc/
+    └── ...`,
+    note: "Folder name = class name. Use Prepare splits to stage train/val/test.",
+  },
+  {
+    title: "ImageFolder (split)",
+    task: "Classification",
+    badge: "train/val/test of <class>/",
+    description:
+      "Already Ultralytics-ready. Classification training runs directly against this layout — train/, val/, and optionally test/, each containing one folder per class.",
+    tree: `my-dataset/
+├── train/
+│   ├── lung_aca/
+│   ├── lung_n/
+│   └── lung_scc/
+├── val/
+│   ├── lung_aca/
+│   └── ...
+└── test/              ← optional
+    └── ...`,
+  },
+];
+
+function LayoutExamplesCard() {
+  // Default open the first time the user lands — once they've collapsed it
+  // we don't reopen, so frequent users aren't yelled at every visit. The
+  // localStorage key is intentional (not a per-tab Zustand store) so the
+  // collapsed state persists across sessions.
+  const [open, setOpen] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem("vrl-yolo-gui.layout-examples-open") !== "0";
+  });
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        "vrl-yolo-gui.layout-examples-open",
+        next ? "1" : "0",
+      );
+    }
+  };
+  return (
+    <Card>
+      <button
+        type="button"
+        onClick={toggle}
+        className="flex w-full items-center justify-between gap-3 px-6 py-4 text-left"
+      >
+        <div className="flex items-center gap-2">
+          <HelpCircle className="size-4 text-accent" />
+          <span className="text-sm font-medium text-ink">
+            What does my dataset need to look like?
+          </span>
+        </div>
+        <div className="text-ink-muted">
+          {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+        </div>
+      </button>
+      {open ? (
+        <CardContent className="grid grid-cols-1 gap-4 border-t border-surface-muted pt-4 md:grid-cols-2">
+          {LAYOUT_EXAMPLES.map((ex) => (
+            <div
+              key={ex.title}
+              className="flex flex-col gap-2 rounded-md border border-surface-muted bg-surface-subtle p-3"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-ink">{ex.title}</p>
+                  <p className="text-xs text-ink-muted">{ex.badge}</p>
+                </div>
+                <Badge tone={ex.task === "Classification" ? "subtle" : "clinical"}>
+                  {ex.task}
+                </Badge>
+              </div>
+              <p className="text-xs text-ink-muted">{ex.description}</p>
+              <pre className="overflow-x-auto rounded bg-surface px-2 py-2 font-mono text-[11px] leading-relaxed text-ink">
+                {ex.tree}
+              </pre>
+              {ex.note ? (
+                <p className="text-[11px] italic text-ink-muted">{ex.note}</p>
+              ) : null}
+            </div>
+          ))}
+        </CardContent>
+      ) : null}
+    </Card>
   );
 }
