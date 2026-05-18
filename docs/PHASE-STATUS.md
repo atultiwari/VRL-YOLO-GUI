@@ -29,7 +29,7 @@
 | P5.fix-2 — Window-scoped close filter | ✅ done | `v0.8.2` | `5bc93cc` |
 | P5.fix-3 — Flat ImageFolder + classify splitter + layout examples | ✅ done | `v0.8.3` | `72dc1db` |
 | P5.fix-4 — Subprocess env-var dispatch (frozen `-m` bug) | ✅ done | `v0.8.4` | `a86da1b` |
-| P5.fix-5 — Graceful job cancel on Cmd+Q | ✅ done | `v0.8.5` | `TBD` |
+| P5.fix-5 — Graceful job cancel on Cmd+Q | ✅ done | `v0.8.5` | `9159d0e` |
 | P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
@@ -535,7 +535,7 @@ In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runne
 - Same training-subprocess-orphan-on-Cmd+Q gap as P5.fix-1 through P5.fix-3. **Closed in P5.fix-5 below.**
 - The `parents[3]` walk in dev mode is fragile if the repo layout ever shifts. We raise a clear `RuntimeError("src-pyloid/main.py not found at ...")` at training-start time if the path is wrong, but the better long-term fix is to plumb the entry path through Settings at app startup so JobManager doesn't have to guess.
 
-### ✅ P5.fix-5 — Graceful job cancel on Cmd+Q · `v0.8.5` · `TBD`
+### ✅ P5.fix-5 — Graceful job cancel on Cmd+Q · `v0.8.5` · `9159d0e`
 
 **Trigger:** the macOS Cmd+Q workaround shipped in P5.fix-2 (`QEvent::Close` filter → `os._exit(0)`) is intentionally abrupt — it has to be, to dodge the QSurface / QThreadStorage static-destructor crash. But `os._exit` skips Python's atexit chain, which means an in-flight training subprocess (spawned with its own session/process group, per P4b) gets reparented to `launchd` and keeps running. CPU/RAM/MPS stay pinned for the rest of the run, `best.pt` writes silently, and the user — who thought Cmd+Q cancelled training — gets no save-to-library prompt and no UI thread to see the orphan from. Flagged as "carried-forward" in every release from v0.8.1 onward; this fix closes it on macOS.
 

@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P5.fix-5",
     title: "Graceful job cancel on Cmd+Q (training subprocess no longer orphaned)",
     tag: "v0.8.5",
-    commit: "TBD",
+    commit: "9159d0e",
     date: "2026-05-18",
     status: "current",
     features: [],
