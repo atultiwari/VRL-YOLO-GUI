@@ -142,7 +142,82 @@ def _macos_hard_exit(reason: str) -> None:
     os._exit(0)
 
 
-def _install_macos_shutdown_workaround(window) -> None:  # noqa: ANN001 — pyloid window
+def _cancel_active_jobs_best_effort(app, *, timeout_s: float = 3.0) -> None:  # noqa: ANN001 — FastAPI app
+    """SIGTERM every running/queued training job and wait briefly for exit.
+
+    Without this, the macOS Cmd+Q hard-exit path leaves any in-flight
+    training subprocess orphaned to launchd — it keeps consuming
+    CPU/RAM/MPS until its epochs finish, with no UI showing it. The
+    `best.pt` it eventually writes is invisible to the (now dead)
+    JobManager, so the user can't save-to-library or even see what
+    finished.
+
+    We can't avoid `os._exit` (that bypass is the only thing preventing
+    the QSurface / QThreadStorage static-destructor crash), so the next
+    best thing is: cancel cleanly first, then hard-exit. JobManager.cancel
+    already sends `SIGTERM` to the process group, which propagates to
+    Ultralytics' DataLoader workers and any tqdm threads — that's the
+    correct hammer.
+
+    `timeout_s` caps how long we block the main thread waiting for the
+    cancel to land. 3 s is long enough for Ultralytics to flush an
+    in-progress `best.pt` write and close MPS buffers; short enough that
+    Cmd+Q still feels responsive. If the wait expires, we proceed to
+    hard-exit anyway — leaving a partially-written checkpoint is a worse
+    outcome than the close crash we were originally preventing, but only
+    just; an orphaned-but-running process is the worst outcome of all,
+    and SIGTERM almost always lands in well under 3 s.
+
+    Errors are swallowed: this runs from inside a QEvent::Close filter,
+    and an unhandled exception here would re-enter the close path the
+    workaround was designed to skip.
+    """
+    if app is None:
+        return
+    try:
+        job_manager = getattr(getattr(app, "state", None), "job_manager", None)
+        if job_manager is None:
+            return
+        active = [
+            j
+            for j in job_manager.list_jobs()
+            if j.snapshot()["status"] in {"queued", "running"}
+        ]
+        if not active:
+            return
+        print(f"step: cancelling {len(active)} active training job(s) before exit")
+        for job in active:
+            try:
+                job_manager.cancel(job.job_id)
+            except Exception as exc:  # noqa: BLE001 — never let cancel kill the close path
+                print(f"step: cancel failed for {job.job_id[:8]} (non-fatal): {exc}")
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            still_active = [
+                j
+                for j in active
+                if j.snapshot()["status"] in {"queued", "running"}
+            ]
+            if not still_active:
+                print("step: all active jobs cancelled cleanly")
+                return
+            time.sleep(0.1)
+        remaining = [
+            j
+            for j in active
+            if j.snapshot()["status"] in {"queued", "running"}
+        ]
+        if remaining:
+            ids = ", ".join(j.job_id[:8] for j in remaining)
+            print(
+                f"step: cancel timeout after {timeout_s}s — "
+                f"{len(remaining)} job(s) still running ({ids}); hard-exiting anyway"
+            )
+    except Exception as exc:  # noqa: BLE001 — top-level safety net
+        print(f"step: job cancellation skipped (non-fatal): {exc}")
+
+
+def _install_macos_shutdown_workaround(window, fastapi_app) -> None:  # noqa: ANN001 — pyloid window + FastAPI app
     """Skip the Qt 6 + QtWebEngine static-destructor crash on macOS quit.
 
     Symptom: `EXC_BAD_ACCESS (SIGSEGV) / KERN_INVALID_ADDRESS at 0x0` when
@@ -243,6 +318,7 @@ def _install_macos_shutdown_workaround(window) -> None:  # noqa: ANN001 — pylo
         def eventFilter(self, _obj, event) -> bool:  # noqa: ANN001 — Qt signature
             try:
                 if event.type() == close_type:
+                    _cancel_active_jobs_best_effort(fastapi_app)
                     _macos_hard_exit("QEvent.Close intercepted")
             except Exception as exc:  # noqa: BLE001 — never crash event dispatch
                 print(f"step: closeEvent filter error (non-fatal): {exc}")
@@ -257,7 +333,10 @@ def _install_macos_shutdown_workaround(window) -> None:  # noqa: ANN001 — pylo
     )
 
     app.aboutToQuit.connect(
-        lambda: _macos_hard_exit("aboutToQuit fallback"),
+        lambda: (
+            _cancel_active_jobs_best_effort(fastapi_app),
+            _macos_hard_exit("aboutToQuit fallback"),
+        ),
         type=Qt.ConnectionType.DirectConnection,
     )
 
@@ -534,7 +613,12 @@ def main() -> int:
     # returns. An earlier attempt installed an app-wide QEvent::Quit
     # filter before the window was built; it broke QWebEngineView
     # construction and the app exited silently before pyloid.run().
-    _install_macos_shutdown_workaround(window)
+    #
+    # `app` (the FastAPI app) carries the JobManager on its `.state`; the
+    # close-event filter walks active training jobs through that handle
+    # to SIGTERM them before hard-exiting, so Cmd+Q during a training
+    # run actually cancels the run instead of orphaning it to launchd.
+    _install_macos_shutdown_workaround(window, app)
     _maybe_install_auto_quit_for_test()
 
     splash.close_after(window)

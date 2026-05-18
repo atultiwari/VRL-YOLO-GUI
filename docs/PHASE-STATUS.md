@@ -1,7 +1,7 @@
 # Phase Status
 
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones).
-> Updated at the end of each phase boundary. **Last edit: 2026-05-18 (P5.fix-4 — subprocess env-var dispatch).**
+> Updated at the end of each phase boundary. **Last edit: 2026-05-18 (P5.fix-5 — graceful job cancel on Cmd+Q).**
 >
 > **Known limitations and deferred work** live in
 > [`docs/CARRY-FORWARDS.md`](CARRY-FORWARDS.md) — full diagnoses + fix
@@ -29,6 +29,7 @@
 | P5.fix-2 — Window-scoped close filter | ✅ done | `v0.8.2` | `5bc93cc` |
 | P5.fix-3 — Flat ImageFolder + classify splitter + layout examples | ✅ done | `v0.8.3` | `72dc1db` |
 | P5.fix-4 — Subprocess env-var dispatch (frozen `-m` bug) | ✅ done | `v0.8.4` | `a86da1b` |
+| P5.fix-5 — Graceful job cancel on Cmd+Q | ✅ done | `v0.8.5` | `TBD` |
 | P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
@@ -531,8 +532,24 @@ In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runne
 | P5.fix-4.3 | End-to-end repro | Two smokes in dev, both passing. Classify against `lung_partial`: spawn → start/epoch/complete events streamed → `top1=0.333, top5=1.000`. Detect regression against a tiny synthetic dataset: same — start/epoch/complete events → `mAP50=0.0` (1 fake box, 1 epoch, expected) → status=completed. The dev path now exercises the SAME dispatch the frozen `.app` will hit, so a regression in either mode is caught locally before binary build. |
 
 **Carried-forward:**
-- Same training-subprocess-orphan-on-Cmd+Q gap as P5.fix-1 through P5.fix-3.
+- Same training-subprocess-orphan-on-Cmd+Q gap as P5.fix-1 through P5.fix-3. **Closed in P5.fix-5 below.**
 - The `parents[3]` walk in dev mode is fragile if the repo layout ever shifts. We raise a clear `RuntimeError("src-pyloid/main.py not found at ...")` at training-start time if the path is wrong, but the better long-term fix is to plumb the entry path through Settings at app startup so JobManager doesn't have to guess.
+
+### ✅ P5.fix-5 — Graceful job cancel on Cmd+Q · `v0.8.5` · `TBD`
+
+**Trigger:** the macOS Cmd+Q workaround shipped in P5.fix-2 (`QEvent::Close` filter → `os._exit(0)`) is intentionally abrupt — it has to be, to dodge the QSurface / QThreadStorage static-destructor crash. But `os._exit` skips Python's atexit chain, which means an in-flight training subprocess (spawned with its own session/process group, per P4b) gets reparented to `launchd` and keeps running. CPU/RAM/MPS stay pinned for the rest of the run, `best.pt` writes silently, and the user — who thought Cmd+Q cancelled training — gets no save-to-library prompt and no UI thread to see the orphan from. Flagged as "carried-forward" in every release from v0.8.1 onward; this fix closes it on macOS.
+
+**Fix:** plumb the FastAPI app through to the close-event filter, walk active jobs, SIGTERM each, wait briefly, then hard-exit.
+
+| # | Subject | Outcome |
+|---|---|---|
+| P5.fix-5.1 | New `_cancel_active_jobs_best_effort(fastapi_app, timeout_s=3.0)` helper in `src-pyloid/main.py` | Pulls `app.state.job_manager`, filters to `status in {queued, running}`, calls `job_manager.cancel(job_id)` on each (which already does the right thing per-OS — `os.killpg(SIGTERM)` on POSIX, `CTRL_BREAK_EVENT` on Windows). Polls every 100 ms until all jobs leave running/queued, capped at `timeout_s`. All errors are swallowed and step-logged because this runs inside the close-event filter and an unhandled exception would re-enter the close cascade. |
+| P5.fix-5.2 | `_install_macos_shutdown_workaround(window)` → `(window, fastapi_app)` | Signature grew a second parameter so the close filter can reach the JobManager. Renamed parameter to `fastapi_app` so it doesn't shadow the existing `app = QApplication.instance()` local. Both the `QEvent::Close` filter and the `aboutToQuit` fallback now call `_cancel_active_jobs_best_effort(fastapi_app)` immediately before `_macos_hard_exit(...)`. |
+| P5.fix-5.3 | Smoke verified | `PYTHONUNBUFFERED=1 VRL_YOLO_GUI_TEST_AUTO_QUIT_S=4 uv run --extra ml python src-pyloid/main.py` → `step: TEST timer fired — calling QApplication.quit()` → `step: QEvent.Close intercepted — bypassing static-destructor crash via os._exit`. No active jobs → cancel helper is a no-op → exit code 0. The install + intercept chain is unregressed; the full cancel-then-exit path with real jobs requires a training run, planned as part of tomorrow's thorough test. |
+
+**Carried-forward:**
+- Linux / Windows still orphan the training subprocess on app quit. Pilot is macOS-only; revisit when we ship for those platforms.
+- Skill `python-pyloid-desktop-packaging` still doesn't document this pattern — tracked separately as carry-forward item #2.
 
 ---
 

@@ -12,6 +12,22 @@ for the running tracker.
 
 ---
 
+## [0.8.5] — 2026-05-18 · P5.fix-5: Graceful job cancel on Cmd+Q (training subprocess no longer orphaned)
+
+**Tag:** `v0.8.5`
+
+### Fixed
+- **Cmd+Q during a training run now actually stops the training.** v0.8.2 fixed the macOS Cmd+Q crash by intercepting `QEvent::Close` and calling `os._exit(0)` to bypass the `QSurface` / `QThreadStorage` static-destructor race. That works, but `os._exit` is abrupt — it doesn't unwind Python, which means the training subprocess (Ultralytics under `train_runner.py`) gets reparented to launchd and keeps running silently in the background. CPU / RAM / MPS stay pinned for the rest of the run, the eventual `best.pt` is invisible to the (now dead) `JobManager`, and the user thinks Cmd+Q cancelled their training when really it only hid the UI. The new `_cancel_active_jobs_best_effort(app, timeout_s=3.0)` walks every running / queued job through `JobManager.cancel()` (which already SIGTERMs the process group on POSIX), polls for clean exit, and only then proceeds to `_macos_hard_exit`. Wired into both the `QEvent::Close` filter (Cmd+Q path) and the `aboutToQuit` fallback (e.g. SIGTERM from a signal handler).
+- Best-effort means best-effort: if a job hangs past the 3 s cap, we hard-exit anyway. Leaving a partial checkpoint on disk is a strictly better outcome than the close crash this code was originally written to prevent, and SIGTERM almost always lands in well under 3 s for an Ultralytics run. Every step logs through the existing `step:` print pattern so `launch.log` shows the cancellation trail.
+- The function signature for `_install_macos_shutdown_workaround` grew a second parameter (the FastAPI app), so the close filter can reach `app.state.job_manager` at fire time. Renamed the parameter `fastapi_app` to avoid shadowing the existing `app = QApplication.instance()` local. Verified the existing `VRL_YOLO_GUI_TEST_AUTO_QUIT_S=4` smoke still exits cleanly with no active jobs (no-op cancel path), proving the install + intercept chain didn't regress.
+
+### Known limitations (deferred)
+- **Linux / Windows still orphan the training subprocess** on app quit. Subprocess is started with `start_new_session=True` (POSIX) / `CREATE_NEW_PROCESS_GROUP` (Windows), so the parent dying doesn't propagate. Pilot is macOS-only — out of scope here. Will revisit when we ship for those platforms.
+- Cancellation logic runs from the main Qt thread inside an event filter, so it blocks the UI for up to 3 s. That's intentional — the alternative is returning to the close cascade, which is the crash path we explicitly bypass. Cmd+Q with a training run mid-epoch will feel marginally laggier than without one; the user sees it as the training shutting down, which is the right mental model.
+- Skill `python-pyloid-desktop-packaging` still doesn't document this pattern. Tracked separately in `docs/CARRY-FORWARDS.md` item #2.
+
+---
+
 ## [0.8.4] — 2026-05-18 · P5.fix-4: Subprocess env-var dispatch (Train opened a second app + stuck at epoch 0)
 
 **Tag:** `v0.8.4`

@@ -4,7 +4,7 @@
 > shipped versions. Each item is a real gap, not a bug we don't know about.
 > Sorted by likelihood of hitting in real use, not by complexity.
 >
-> **Last edit: 2026-05-18 (after v0.8.4 / P5.fix-4).**
+> **Last edit: 2026-05-18 (after v0.8.5 / P5.fix-5 — item #1 closed).**
 
 Each entry is self-contained so a future session can pick it up cold without
 re-reading the whole P5 fix chain.
@@ -15,7 +15,7 @@ re-reading the whole P5 fix chain.
 
 | | |
 |---|---|
-| **Status** | Open, deferred |
+| **Status** | ✅ Resolved in v0.8.5 / P5.fix-5 — see [Resolved section](#resolved) below |
 | **First flagged** | v0.8.1 / P5.fix-1 (re-flagged in fix-2, fix-3, fix-4) |
 | **Severity** | Medium — user-visible "training silently keeps running after I quit" |
 | **Blocks pilot?** | Recommend fixing before pilot users hit it |
@@ -358,6 +358,60 @@ backward-compatible change.
   doing first since P6 will also lean on Pyloid + QtWebEngine packaging.
 - **During pilot prep**: revisit splitter behaviour (#3) once we know
   what shape pilots' datasets actually arrive in.
+
+## Resolved
+
+History of carry-forwards that have been closed. Kept here so a future
+session can see *what was diagnosed and how it was fixed* without
+digging through commit history; the open-items list above should stay
+focused on what's actually pending.
+
+### ✅ Item #1 — Graceful job-group SIGTERM on Cmd+Q
+
+| | |
+|---|---|
+| **Closed in** | v0.8.5 / P5.fix-5 (2026-05-18) |
+| **Time open** | v0.8.1 → v0.8.4 (4 successive patches re-flagged this) |
+| **Path taken** | Option A — silent best-effort cancel with a 3 s wait |
+| **Decisions** | Silent (no prompt) per Cmd+Q being an explicit quit intent; 3 s timeout (long enough to flush `best.pt`, short enough Cmd+Q still feels responsive); hard-exit if cancel hangs past the cap |
+
+**What landed** (full detail in `docs/PHASE-STATUS.md`, `CHANGELOG.md` 0.8.5, and the
+`fix(p5.fix-5):` commit):
+
+- New `_cancel_active_jobs_best_effort(fastapi_app, timeout_s=3.0)` helper in
+  `src-pyloid/main.py`. Pulls `app.state.job_manager`, filters to
+  `status in {queued, running}`, calls `job_manager.cancel(job_id)` on each
+  (which already SIGTERMs the process group on POSIX and CTRL_BREAK_EVENT
+  on Windows), polls every 100 ms for clean exit, and returns when all
+  jobs leave running/queued or the timeout expires. All errors swallowed +
+  step-logged so an unhandled exception can't re-enter the close cascade.
+- `_install_macos_shutdown_workaround(window)` grew a second parameter
+  (the FastAPI app, named `fastapi_app` to avoid shadowing the existing
+  `app = QApplication.instance()` local). Both the `QEvent::Close` filter
+  (Cmd+Q path) and the `aboutToQuit` fallback now call the cancel helper
+  immediately before `_macos_hard_exit(...)`.
+- Verified with `PYTHONUNBUFFERED=1 VRL_YOLO_GUI_TEST_AUTO_QUIT_S=4
+  uv run --extra ml python src-pyloid/main.py` — clean exit, no regression
+  on the no-active-jobs path. Real-job cancellation exercised as part of
+  the thorough v0.8.5 test pass.
+
+**Why this path** over the alternatives:
+- Option B (confirmation prompt) ruled out: modal dialogs inside a
+  `QEvent::Close` filter risk re-entering the close cascade the workaround
+  exists to skip.
+- Option C (persist job state, allow re-attaching) ruled out: heavy
+  scaffolding for a use case ("I wish I could quit and come back later")
+  that pilot users haven't asked for yet. Revisit only on real demand.
+
+**Carry-forwards from the fix itself**:
+- Linux / Windows still orphan training subprocesses on app quit (subprocess
+  was started with its own session/process group). Pilot is macOS-only; will
+  revisit when we ship for those platforms. NOT tracked as a new
+  carry-forward yet because no Linux/Windows binary is in pilot scope.
+- Skill `python-pyloid-desktop-packaging` still documents the older
+  approach. Tracked separately as carry-forward item #2 below.
+
+---
 
 ## How to add new carry-forwards
 
