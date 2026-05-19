@@ -32,7 +32,7 @@
 | P5.fix-5 — Graceful job cancel on Cmd+Q | ✅ done | `v0.8.5` | `9159d0e` |
 | P5.fix-6 — Preserve existing splits in the splitter | ✅ done | `v0.8.6` | `c5ae06e` |
 | P5.fix-7 — Bundle our own dist-info (version badge fix) | ✅ done | `v0.8.7` | `400ba79` |
-| **P6a — Colab companion notebooks + runtime** | ✅ done | `v0.8.8-p6a-colab-notebook` | PENDING |
+| **P6a — Colab companion notebooks + runtime** | ✅ done | `v0.8.8-p6a-colab-notebook` | `8e3f08d` |
 | P6b — Desktop *Run on Colab* integration | ⏳ next | — | — |
 | P6c — Polish + end-to-end pilot test | ⏳ pending | — | — |
 | P7 — Polish | ⏳ pending | — | — |

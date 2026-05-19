@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P6a",
     title: "Train on Colab — companion notebooks + Colab runtime (no desktop integration yet)",
     tag: "v0.8.8-p6a-colab-notebook",
-    commit: "PENDING",
+    commit: "8e3f08d",
     date: "2026-05-20",
     status: "current",
     features: [
