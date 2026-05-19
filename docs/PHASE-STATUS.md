@@ -30,7 +30,7 @@
 | P5.fix-3 — Flat ImageFolder + classify splitter + layout examples | ✅ done | `v0.8.3` | `72dc1db` |
 | P5.fix-4 — Subprocess env-var dispatch (frozen `-m` bug) | ✅ done | `v0.8.4` | `a86da1b` |
 | P5.fix-5 — Graceful job cancel on Cmd+Q | ✅ done | `v0.8.5` | `9159d0e` |
-| P5.fix-6 — Preserve existing splits in the splitter | ✅ done | `v0.8.6` | `TBD` |
+| P5.fix-6 — Preserve existing splits in the splitter | ✅ done | `v0.8.6` | `c5ae06e` |
 | P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
@@ -552,7 +552,7 @@ In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runne
 - Linux / Windows still orphan the training subprocess on app quit. Pilot is macOS-only; revisit when we ship for those platforms.
 - Skill `python-pyloid-desktop-packaging` still doesn't document this pattern — tracked separately as carry-forward item #2. **Closed 2026-05-19 — skill updated in place.**
 
-### ✅ P5.fix-6 — Preserve existing splits in the splitter · `v0.8.6` · `TBD`
+### ✅ P5.fix-6 — Preserve existing splits in the splitter · `v0.8.6` · `c5ae06e`
 
 **Trigger:** carry-forward item #3. Up to v0.8.5, `split_dataset` (detect) and `split_imagefolder` (classify) gathered every image from anywhere under the dataset root, shuffled by seed, and redistributed — destroying any hand-curated train/val/test assignments. A user with a Roboflow export who just wanted to add a test split couldn't, and a clinical-research user who placed the hardest cases in `val/` on purpose lost that curation as soon as Prepare splits ran. Flagged in v0.8.3 docs as Option A's "Preserve existing splits" toggle; deferred at the time because pilot exposure was unclear.
 

@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P5.fix-6",
     title: "Preserve existing splits — splitter no longer always reshuffles",
     tag: "v0.8.6",
-    commit: "TBD",
+    commit: "c5ae06e",
     date: "2026-05-19",
     status: "current",
     features: [
