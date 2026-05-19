@@ -4,7 +4,7 @@
 > shipped versions. Each item is a real gap, not a bug we don't know about.
 > Sorted by likelihood of hitting in real use, not by complexity.
 >
-> **Last edit: 2026-05-18 (after v0.8.5 / P5.fix-5 — item #1 closed).**
+> **Last edit: 2026-05-19 (skill `python-pyloid-desktop-packaging` corrected — item #2 closed; 1 item remains open).**
 
 Each entry is self-contained so a future session can pick it up cold without
 re-reading the whole P5 fix chain.
@@ -125,7 +125,7 @@ after quit."
 
 | | |
 |---|---|
-| **Status** | Open, deferred |
+| **Status** | ✅ Resolved 2026-05-19 — skill updated in place, see [Resolved section](#resolved) below |
 | **First flagged** | v0.8.1 / P5.fix-1; corrected in fix-2 but skill not updated |
 | **Severity** | Low for this project, high for any *future* Pyloid project |
 | **Blocks pilot?** | No |
@@ -409,7 +409,71 @@ focused on what's actually pending.
   revisit when we ship for those platforms. NOT tracked as a new
   carry-forward yet because no Linux/Windows binary is in pilot scope.
 - Skill `python-pyloid-desktop-packaging` still documents the older
-  approach. Tracked separately as carry-forward item #2 below.
+  approach. Tracked separately as carry-forward item #2 — **resolved
+  2026-05-19, see below.**
+
+### ✅ Item #2 — `python-pyloid-desktop-packaging` skill needs corrections
+
+| | |
+|---|---|
+| **Closed in** | Skill edit at `~/.claude/skills/python-pyloid-desktop-packaging/SKILL.md`, 2026-05-19 |
+| **Time open** | v0.8.1 → v0.8.5 (5 successive patches lived with the stale skill) |
+| **Path taken** | Option A (in-place corrections) + Option C (env-gated test hook in verification). Option B (restructure to pull example from VRL-YOLO-GUI) rejected — would add a cross-repo dependency in the skill for marginal durability gain. |
+
+**What landed** (full diff in the skill file itself):
+
+- **TL;DR row at line 37** rewritten to describe the window-scoped
+  `QEvent::Close` filter pattern plus the explicit "NOT on the QApplication"
+  warning. One-liner, points at the detailed section.
+- **Section "macOS quit-time crash" at line 404** rewritten. Kept the
+  7-step root-cause analysis (still correct — the static-destructor chain
+  hasn't changed). Added a date-stamped revision banner. Added two
+  "What initially looked right but isn't" subsections:
+  - **Wrong attempt #1:** `aboutToQuit`-only — fails on macOS 26.x because
+    Pyloid's `BrowserWindow.closeEvent` calls `QCoreApplication.quit()`,
+    which on macOS re-enters `[NSApplication terminate:]` recursively and
+    proceeds straight to `libc exit()` without unwinding through
+    `QCoreApplication::exec()`'s cleanup (which is the only place that
+    emits `aboutToQuit`).
+  - **Wrong attempt #2:** app-wide `QEvent::Quit` filter on QApplication —
+    `PySide::typeName(QObject const*)` derefs null inside
+    `QObjectWrapper::eventFilter` during `QWebEngineView` construction,
+    silent startup crash, no traceback or `.ips` report.
+- Replaced the code example with the working **window-scoped pattern**:
+  - 4-deep `_window` walk to locate the `QMainWindow`.
+  - Module-level `_quit_event_filter` reference (otherwise Python GCs the
+    filter QObject and Qt's raw pointer dangles).
+  - Explicit `super().__init__()` in the filter class.
+  - Filter installed **AFTER** `pyloid.create_window` returns.
+  - `aboutToQuit` connection kept as a fallback for non-Cmd+Q paths.
+- Added a **"Critical wiring rules"** list summarising the four
+  not-obvious-from-the-code constraints.
+- Added a **"One thing this doesn't cover"** note that points readers
+  at v0.8.5 (`9159d0e`) for the orphan-subprocess-on-quit pattern, so
+  the next Pyloid project doesn't repeat the same diagnostic loop.
+- **Verification block** replaced with the env-gated `_TEST_AUTO_QUIT_S`
+  test hook pattern (scriptable + CI-able, vs the old "repeatedly Cmd+Q
+  manually and watch DiagnosticReports"). Names the env var per-project
+  (skill prescribes `MYAPP_TEST_AUTO_QUIT_S`; VRL-YOLO-GUI uses
+  `VRL_YOLO_GUI_TEST_AUTO_QUIT_S`).
+- **Checklist at line 1042** updated to match.
+- **Reference citation:** `VRL-YOLO-GUI` at commit `5bc93cc` (v0.8.2 /
+  P5.fix-2) for the canonical form of the base fix.
+
+**Why this path** over the alternatives:
+
+- **Option B** (restructure to pull the example directly from
+  VRL-YOLO-GUI) rejected because the skill is currently self-contained
+  and that's a feature, not a bug — every cross-repo dependency in a
+  skill is a place where the skill silently rots when the upstream
+  project moves.
+- The skill is already long and battle-tested; in-place corrections
+  preserve all the surrounding context (the static-destructor steps,
+  the "Why this is loss-free" rationale, the cross-platform note) while
+  fixing only the wrong parts.
+
+**Carry-forwards from the fix itself**: none. The skill is now the
+single source of truth again for new Pyloid projects.
 
 ---
 
