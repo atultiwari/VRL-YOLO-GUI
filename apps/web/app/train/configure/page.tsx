@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Cloud,
   Cpu,
   Database,
   Gauge,
@@ -16,6 +17,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { ClassNamesEditor } from "@/components/train/class-names-editor";
+import { ConnectColabModal } from "@/components/train/connect-colab-modal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -82,6 +84,7 @@ export default function TrainConfigurePage() {
     setActiveJob,
   } = useTrainStore();
   const [startError, setStartError] = useState<string | null>(null);
+  const [colabModalOpen, setColabModalOpen] = useState(false);
 
   // If we got here without a dataset (e.g. fresh tab, store hydrated but
   // dataset was cleared by a "Reset desktop storage"), redirect back.
@@ -310,6 +313,10 @@ export default function TrainConfigurePage() {
         </div>
       </div>
 
+      {hardware?.kind === "cpu" ? (
+        <RunOnColabCallout onClick={() => setColabModalOpen(true)} />
+      ) : null}
+
       <div className="flex flex-col items-end gap-2">
         {startError ? (
           <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-800">
@@ -338,7 +345,46 @@ export default function TrainConfigurePage() {
           )}
         </Button>
       </div>
+
+      {colabModalOpen ? (
+        <ConnectColabModal
+          task={taskForUi}
+          onClose={() => setColabModalOpen(false)}
+          onConnected={(jobId) => {
+            setColabModalOpen(false);
+            setActiveJob(jobId);
+            router.push("/train/run");
+          }}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function RunOnColabCallout({ onClick }: { onClick: () => void }) {
+  return (
+    <Card className="border-amber-200 bg-amber-50">
+      <CardContent className="flex items-start justify-between gap-4 py-4">
+        <div className="flex items-start gap-3">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-amber-100 text-amber-700">
+            <Cloud className="size-4" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-ink">
+              This machine has no GPU — local training will be slow.
+            </p>
+            <p className="mt-1 text-xs text-ink-muted">
+              Train on a free Google Colab GPU instead. Live charts, save to
+              library, and predict afterwards all work the same way.
+            </p>
+          </div>
+        </div>
+        <Button onClick={onClick} className="shrink-0">
+          <Cloud className="size-4" />
+          Run on Colab
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 

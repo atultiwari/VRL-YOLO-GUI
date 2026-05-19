@@ -372,6 +372,30 @@ export async function saveTrainingToLibrary(
   );
 }
 
+// --- Train on Colab (P6b) ----------------------------------------------
+
+/**
+ * Validate a Colab tunnel URL with the backend (which does a 3 s
+ * pre-flight GET /status against the tunnel) and register a
+ * Colab-backed TrainingJob. On success the desktop streams the remote
+ * runner's events through the same /api/training/{id}/stream
+ * WebSocket a local run uses, so /train/run works unchanged.
+ *
+ * Throws ApiError with clinician-readable detail on every pre-flight
+ * failure (stale URL, wrong token, unreachable host, payload shape
+ * mismatch). The backend's error text already reads as plain English —
+ * surface it as-is.
+ */
+export async function connectColab(
+  tunnelUrl: string,
+): Promise<StartTrainingResponse> {
+  return fetchJson(`${API_BASE}/training/colab/connect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tunnel_url: tunnelUrl }),
+  });
+}
+
 /**
  * Build the WebSocket URL for a job's event stream. The handler replays
  * every event so far, then streams new ones until the job hits a terminal

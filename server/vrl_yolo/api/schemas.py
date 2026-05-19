@@ -293,11 +293,32 @@ class TrainingJobInfo(BaseModel):
     epoch_current: int = 0
     started_at: str  # ISO 8601 UTC
     finished_at: str | None = None
-    accelerator_kind: Literal["cuda", "mps", "cpu"]
+    # "colab" marks a Colab-backed job (training happens on a remote
+    # Colab worker; the desktop streams events through a Cloudflare
+    # tunnel). All other kinds are local subprocess jobs.
+    accelerator_kind: Literal["cuda", "mps", "cpu", "colab"]
     output_dir: str
     metrics: TrainingMetrics = Field(default_factory=TrainingMetrics)
     error_message: str | None = None
 
 
 class StartTrainingResponse(BaseModel):
+    job_id: str
+
+
+class ColabConnectRequest(BaseModel):
+    """Body for `POST /api/training/colab/connect`.
+
+    The user pastes the URL their Colab notebook cell printed; it has
+    the shape `https://<random>.trycloudflare.com?token=<rand>`. The
+    backend splits the base from the token, does a 3-second pre-flight
+    `GET /status?token=...` to validate the session is live, and seeds
+    a TrainingJob whose event stream comes from the tunnel's
+    WebSocket.
+    """
+
+    tunnel_url: str = Field(..., min_length=10, max_length=2048)
+
+
+class ColabConnectResponse(BaseModel):
     job_id: str

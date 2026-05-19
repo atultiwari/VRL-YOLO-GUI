@@ -41,13 +41,40 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.8.9",
+    phase: "P6b",
+    title: "Train on Colab — desktop Run on Colab callout + Connect modal + Colab-backed jobs",
+    tag: "v0.8.9-p6b-colab-desktop",
+    commit: "PENDING",
+    date: "2026-05-20",
+    status: "current",
+    features: [
+      "**Run on Colab callout on /train/configure** — when the accelerator probe returns `cpu`, a yellow card now sits between the hyperparameter section and the Start training button: *\"This machine has no GPU — local training will be slow. Train on a free Google Colab GPU instead.\"* with a Run on Colab button. Clinicians on CPU-only Macs / Windows boxes no longer stumble into accidental overnight CPU runs.",
+      "**Connect to Colab modal** — task-aware (detect vs classify), shows the GitHub-anchored Colab notebook URL with Copy + Open buttons (Open opens the URL in the system browser via window.open, which Pyloid routes through QWebEngine's external-URL handler), takes the `trycloudflare.com?token=…` URL from the cell, and calls the backend's pre-flight to validate. Errors surface in-modal in plain English (stale URL, wrong token, unreachable host, wrong payload shape) instead of as raw HTTP failures.",
+      "**`engine/colab.py`** — desktop-side bridge to the Colab worker. `ColabSession` carries the parsed base URL + token + the GET /status response so callers can seed a TrainingJob in one round trip; `connect(tunnel_url)` does a 3 s `GET /status?token=…` pre-flight and raises `ColabConnectError` with clinician-readable text on every failure mode; `request_cancel(session)` POSTs /cancel; `fetch_best_pt(session, dest)` streams /best.pt to disk with `shutil.copyfileobj`. Stdlib-only (urllib) — no new HTTP client dependency.",
+      "**`engine/colab_reader.py`** — daemon-thread WebSocket reader that translates remote `_VRL_EVENT` payloads into `job.append_event` calls, the exact same code path the local subprocess reader uses. Uses `websockets.sync.client.connect` so no asyncio thread juggling. Synthesises an `error` event if the Colab cell stops before a terminal event arrives, so the desktop UI flips out of live-charts state cleanly instead of spinning forever.",
+      "**`JobManager.start_colab_job(tunnel_url)`** — parallel entry point alongside the existing `start(...)`. Returns a `TrainingJob` shaped identically to a local run (with `accelerator_kind='colab'` and `_colab_session` set instead of `_process`), so `/train/run` and the existing `/api/training/{id}/stream` WebSocket fan-out consume Colab events with zero changes. `cancel()` branches on `_colab_session`: POST /cancel to the tunnel for Colab jobs, SIGTERM the subprocess group for local. `save_to_library()` lazy-downloads best.pt through the tunnel for Colab jobs before the existing copy-to-models logic runs.",
+      "**`POST /api/training/colab/connect`** — accepts `{ tunnel_url }`, calls `manager.start_colab_job`, returns `{ job_id }`. Maps `ColabConnectError` to a clean HTTP 400 with the original clinician-readable detail message, so the frontend can render it without translation.",
+      "**`connectColab()` API helper** — `apps/web/lib/api.ts`. Signature matches `startTraining()` so the configure page's success handler (set active job + push to /train/run) works for both local and Colab jobs interchangeably.",
+      "**P6b integration smoke test suite** — `tests/test_colab_integration_smoke.py` (9 passing tests) stands up a real ColabServer on localhost, treats it as a tunnel, and exercises `engine.colab.connect` (success + missing-token + bad-scheme + unreachable-host), `JobManager.start_colab_job` (seed shape + reader-thread event propagation + terminal-event status flip), `JobManager.cancel` (POSTs through to the tunnel), and `JobManager.save_to_library` (downloads best.pt + lands in models/<task>/).",
+    ],
+    fixes: [
+      "Colab-side `JobState` and `/status` response gained `imgsz` + `batch` so the desktop's connect pre-flight has the full training config in one round trip; previously the desktop would have needed to wait for the replayed `start` event over WS to populate those fields.",
+    ],
+    knownLimitations: [
+      "No reconnect-with-backoff on WebSocket drops. The current reader thread surfaces an `error` event if the tunnel goes down, but the desktop doesn't yet attempt to reconnect when the Colab cell is restarted. Ships in P6c.",
+      "best.pt download isn't resumable. If the tunnel drops mid-download, the user re-clicks *Save to library*. Tracked for P6c polish.",
+      "End-to-end pilot test against real Colab + a clinical dataset (the 9-step plan in docs/PLAN-P6.md §7) hasn't run yet — that's P6c.",
+    ],
+  },
+  {
     version: "0.8.8",
     phase: "P6a",
     title: "Train on Colab — companion notebooks + Colab runtime (no desktop integration yet)",
     tag: "v0.8.8-p6a-colab-notebook",
     commit: "8e3f08d",
     date: "2026-05-20",
-    status: "current",
+    status: "shipped",
     features: [
       "**Two companion Colab notebooks** — `notebooks/01_train_detect_colab.ipynb` (detection) and `notebooks/02_train_classify_colab.ipynb` (classification). Five-cell thin orchestrators: mount Drive → clone the repo → edit a config dict → start the local server + Cloudflare quick-tunnel → run training. The notebook URLs are GitHub-anchored so any fix lands the next time the clinician opens Colab.",
       "**Colab-side runtime modules** under `notebooks/_runtime/`: `colab_tunnel.py` (downloads cloudflared on first use, parses the `trycloudflare.com` URL from stdout, returns a live `TunnelHandle`), `colab_server.py` (FastAPI mini-server exposing `GET /status`, `WS /events`, `GET /best.pt`, `POST /cancel` — all token-authenticated per docs/PLAN-P6.md §4.6), `colab_runner.py` (Ultralytics training driver that publishes events through the server's fan-out queue and honours cancellation requests between epochs).",

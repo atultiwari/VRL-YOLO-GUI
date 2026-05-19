@@ -55,6 +55,8 @@ class JobState:
     task: str  # "detect" | "classify"
     model: str
     epochs_total: int
+    imgsz: int
+    batch: int
     status: str = "starting"  # starting | running | done | cancelled | error
     epoch: int = 0
     metrics: dict[str, float | None] = field(default_factory=dict)
@@ -77,11 +79,19 @@ class ColabServer:
         task: str,
         model: str,
         epochs: int,
+        imgsz: int,
+        batch: int,
     ) -> None:
         if not token:
             raise ValueError("token is required (use secrets.token_urlsafe(16))")
         self._token = token
-        self._state = JobState(task=task, model=model, epochs_total=epochs)
+        self._state = JobState(
+            task=task,
+            model=model,
+            epochs_total=epochs,
+            imgsz=imgsz,
+            batch=batch,
+        )
         self._cancel_event = threading.Event()
         self._lock = threading.Lock()
         self._subscribers: list[asyncio.Queue[dict[str, Any]]] = []
@@ -228,6 +238,8 @@ class ColabServer:
                     "status": s.status,
                     "epoch": s.epoch,
                     "epochs_total": s.epochs_total,
+                    "imgsz": s.imgsz,
+                    "batch": s.batch,
                     "metrics": s.metrics,
                     "started_at": s.started_at,
                     "finished_at": s.finished_at,

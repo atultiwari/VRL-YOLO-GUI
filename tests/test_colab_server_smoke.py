@@ -47,6 +47,8 @@ def live_server(tmp_path: Path):
         task="detect",
         model="yolo26n.pt",
         epochs=3,
+        imgsz=640,
+        batch=16,
     )
     port = _free_port()
     server.start_uvicorn(port=port)
@@ -85,6 +87,8 @@ def test_status_returns_initial_shape(live_server) -> None:
     assert body["status"] == "starting"
     assert body["epoch"] == 0
     assert body["epochs_total"] == 3
+    assert body["imgsz"] == 640
+    assert body["batch"] == 16
     assert body["best_pt_available"] is False
 
 

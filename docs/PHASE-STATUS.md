@@ -1,7 +1,7 @@
 # Phase Status
 
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones).
-> Updated at the end of each phase boundary. **Last edit: 2026-05-20 (P6a — Colab companion notebooks + runtime; no desktop integration yet).**
+> Updated at the end of each phase boundary. **Last edit: 2026-05-20 (P6b — desktop Run on Colab callout + Connect modal + Colab-backed jobs).**
 >
 > **Known limitations and deferred work** live in
 > [`docs/CARRY-FORWARDS.md`](CARRY-FORWARDS.md) — full diagnoses + fix
@@ -33,14 +33,14 @@
 | P5.fix-6 — Preserve existing splits in the splitter | ✅ done | `v0.8.6` | `c5ae06e` |
 | P5.fix-7 — Bundle our own dist-info (version badge fix) | ✅ done | `v0.8.7` | `400ba79` |
 | **P6a — Colab companion notebooks + runtime** | ✅ done | `v0.8.8-p6a-colab-notebook` | `8e3f08d` |
-| P6b — Desktop *Run on Colab* integration | ⏳ next | — | — |
-| P6c — Polish + end-to-end pilot test | ⏳ pending | — | — |
+| **P6b — Desktop *Run on Colab* integration** | ✅ done | `v0.8.9-p6b-colab-desktop` | PENDING |
+| P6c — Polish + end-to-end pilot test | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at the P6a commit (`v0.8.8-p6a-colab-notebook`). **Next sub-phase:** P6b — Desktop *Run on Colab* integration: surface a `Run on Colab` callout on `/train/configure` when the accelerator probe returns `cpu`, add a `Connect to Colab` modal that takes a tunnel URL + connects via WebSocket, and route the resulting job through `JobManager.start_colab_job` so `/train/run` works unchanged. Spec: [`docs/PLAN-P6.md`](PLAN-P6.md) §3.
+**Current head:** `main` at the P6b commit (`v0.8.9-p6b-colab-desktop`). **Next sub-phase:** P6c — polish + error states + the 9-step end-to-end pilot test against a real Colab session and a clinical dataset. Adds reconnect-with-backoff on WebSocket drops, best.pt download resumability, and Colab-session-timeout detection on the desktop side. Spec: [`docs/PLAN-P6.md`](PLAN-P6.md) §3, pilot plan in §7. Target tag `v0.9-p6-train-colab`.
 
 ---
 

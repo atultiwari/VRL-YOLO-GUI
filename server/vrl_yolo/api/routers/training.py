@@ -26,12 +26,15 @@ from fastapi import (
 
 from vrl_yolo.api.deps import get_job_manager, get_registry
 from vrl_yolo.api.schemas import (
+    ColabConnectRequest,
+    ColabConnectResponse,
     ModelInfo,
     StartTrainingRequest,
     StartTrainingResponse,
     TrainingJobInfo,
     TrainingMetrics,
 )
+from vrl_yolo.engine.colab import ColabConnectError
 from vrl_yolo.engine.registry import ModelRegistry
 from vrl_yolo.engine.training import JobManager, TrainingJob
 
@@ -118,6 +121,32 @@ def start_training(
         ) from exc
 
     return StartTrainingResponse(job_id=job.job_id)
+
+
+@router.post(
+    "/colab/connect",
+    response_model=ColabConnectResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def connect_colab_session(
+    body: ColabConnectRequest,
+    manager: JobManager = Depends(get_job_manager),
+) -> ColabConnectResponse:
+    """Validate a Colab tunnel URL + register a job that streams from it.
+
+    The pre-flight ``GET /status`` happens inside ``manager.start_colab_job``
+    (via ``engine/colab.py::connect``); on success the job's event
+    stream is wired through the WS reader and ``/api/training/{id}/stream``
+    works unchanged.
+    """
+    try:
+        job = manager.start_colab_job(body.tunnel_url)
+    except ColabConnectError as exc:
+        # ColabConnectError already carries clinician-readable text.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return ColabConnectResponse(job_id=job.job_id)
 
 
 @router.get("/{job_id}", response_model=TrainingJobInfo)

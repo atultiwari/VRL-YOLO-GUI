@@ -35,6 +35,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from vrl_yolo.engine.colab import (
+    ColabConnectError,
+    ColabSession,
+    connect as colab_connect,
+    fetch_best_pt as colab_fetch_best_pt,
+    request_cancel as colab_request_cancel,
+)
 from vrl_yolo.engine.hardware import detect_accelerator
 from vrl_yolo.engine.registry import ModelRegistry
 
@@ -112,7 +119,15 @@ class TrainingJob:
     metrics: JobMetrics = field(default_factory=JobMetrics)
     events: list[dict] = field(default_factory=list)
     _process: subprocess.Popen | None = None
+    # Set for Colab-backed jobs only. Mutually exclusive with `_process`:
+    # local jobs have a subprocess + None session; Colab jobs have a
+    # session + None subprocess.
+    _colab_session: ColabSession | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    @property
+    def is_colab(self) -> bool:
+        return self._colab_session is not None
 
     def append_event(self, event: dict) -> None:
         """Append + react to a single stdout event from the runner."""
@@ -348,8 +363,78 @@ class JobManager:
         reader.start()
         return job
 
+    def start_colab_job(self, tunnel_url: str) -> TrainingJob:
+        """Connect to a Colab worker, seed a TrainingJob, spawn a WS reader.
+
+        The remote session does the actual training; we just translate
+        its event stream into ``job.events`` so ``/train/run`` and the
+        existing WebSocket fan-out work unchanged.
+
+        Raises ``ColabConnectError`` (re-raised from ``colab.connect``)
+        on URL / pre-flight failures so the route layer can surface a
+        clean 400.
+        """
+        session = colab_connect(tunnel_url)
+        init = session.initial_status
+
+        # Heavy imports stay here so the module load path doesn't pay
+        # for websockets unless someone actually starts a Colab job.
+        from vrl_yolo.engine.colab_reader import spawn_colab_reader
+
+        job_id = uuid.uuid4().hex
+        output_dir = self._training_root / job_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # No real dataset path on disk — synthesise a marker that snapshot()
+        # can surface as `dataset_id` for display. The frontend treats this
+        # as informational; no file IO ever touches it.
+        synthetic_root = Path(f"colab/{job_id[:8]}")
+
+        # Map remote status to our local JobStatus vocabulary.
+        status_map: dict[str, JobStatus] = {
+            "starting": "running",
+            "running": "running",
+            "done": "completed",
+            "cancelled": "cancelled",
+            "error": "failed",
+        }
+        seeded_status: JobStatus = status_map.get(init.status, "running")
+
+        job = TrainingJob(
+            job_id=job_id,
+            dataset_root=synthetic_root,
+            model=init.model,
+            task=init.task,  # type: ignore[arg-type]
+            epochs_total=init.epochs_total,
+            imgsz=init.imgsz,
+            batch=init.batch,
+            accelerator_kind="colab",
+            output_dir=output_dir,
+            started_at=datetime.now(timezone.utc),
+            status=seeded_status,
+            epoch_current=init.epoch,
+        )
+        job._colab_session = session
+
+        if init.error_message and init.status == "error":
+            job.error_message = init.error_message
+
+        with self._jobs_lock:
+            self._jobs[job_id] = job
+
+        # Reader thread streams /events?token=... → job.append_event.
+        spawn_colab_reader(job, session)
+
+        return job
+
     def cancel(self, job_id: str) -> bool:
-        """Send SIGTERM to the subprocess group. Returns True if a cancel was issued."""
+        """Stop a running job. Returns True if a cancel was issued.
+
+        Branch by job kind: local jobs get SIGTERM to the subprocess
+        group; Colab jobs get a best-effort ``POST /cancel`` to the
+        tunnel. Either way the runner emits a terminal event that the
+        reader thread observes + writes into the job status.
+        """
         job = self.get(job_id)
         if job is None:
             return False
@@ -357,8 +442,14 @@ class JobManager:
             if job.status not in {"queued", "running"}:
                 return False
             proc = job._process
-            if proc is None:
-                return False
+            session = job._colab_session
+
+        if session is not None:
+            colab_request_cancel(session)
+            return True
+
+        if proc is None:
+            return False
         try:
             if os.name == "posix":
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -389,6 +480,17 @@ class JobManager:
             raise ValueError(
                 f"job is {job.status!r}; can only save completed runs to the library"
             )
+
+        # For Colab jobs, the runner's `complete` event sets job.best_pt to
+        # a Colab-side filesystem path (e.g. /content/vrl-yolo-gui-runs/...);
+        # that file isn't reachable from the desktop. Download it through the
+        # tunnel into output_dir/weights/ before the local copy below can run.
+        if job._colab_session is not None:
+            local_best = job.output_dir / "weights" / "best.pt"
+            if not local_best.is_file():
+                colab_fetch_best_pt(job._colab_session, local_best)
+            job.best_pt = local_best
+
         if not job.best_pt or not job.best_pt.is_file():
             raise FileNotFoundError(
                 "best.pt missing — was the training cancelled before the first save?"
