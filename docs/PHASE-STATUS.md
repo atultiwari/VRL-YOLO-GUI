@@ -34,7 +34,7 @@
 | P5.fix-7 — Bundle our own dist-info (version badge fix) | ✅ done | `v0.8.7` | `400ba79` |
 | **P6a — Colab companion notebooks + runtime** | ✅ done | `v0.8.8-p6a-colab-notebook` | `8e3f08d` |
 | **P6b — Desktop *Run on Colab* integration** | ✅ done | `v0.8.9-p6b-colab-desktop` | `6ca2f73` |
-| **P6c — Polish: reconnect-with-backoff + fetch retry + pilot plan** | ✅ done | `v0.9-p6-train-colab` | PENDING |
+| **P6c — Polish: reconnect-with-backoff + fetch retry + pilot plan** | ✅ done | `v0.9-p6-train-colab` | `46c4092` |
 | P7 — Polish | ⏳ next | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |

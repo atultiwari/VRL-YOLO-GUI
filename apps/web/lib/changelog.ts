@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P6",
     title: "Train on Colab — resilience polish, reconnect-with-backoff, retry on best.pt fetch, pilot test plan",
     tag: "v0.9-p6-train-colab",
-    commit: "PENDING",
+    commit: "46c4092",
     date: "2026-05-20",
     status: "current",
     features: [
