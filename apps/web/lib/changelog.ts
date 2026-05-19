@@ -41,13 +41,36 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.8.8",
+    phase: "P6a",
+    title: "Train on Colab — companion notebooks + Colab runtime (no desktop integration yet)",
+    tag: "v0.8.8-p6a-colab-notebook",
+    commit: "PENDING",
+    date: "2026-05-20",
+    status: "current",
+    features: [
+      "**Two companion Colab notebooks** — `notebooks/01_train_detect_colab.ipynb` (detection) and `notebooks/02_train_classify_colab.ipynb` (classification). Five-cell thin orchestrators: mount Drive → clone the repo → edit a config dict → start the local server + Cloudflare quick-tunnel → run training. The notebook URLs are GitHub-anchored so any fix lands the next time the clinician opens Colab.",
+      "**Colab-side runtime modules** under `notebooks/_runtime/`: `colab_tunnel.py` (downloads cloudflared on first use, parses the `trycloudflare.com` URL from stdout, returns a live `TunnelHandle`), `colab_server.py` (FastAPI mini-server exposing `GET /status`, `WS /events`, `GET /best.pt`, `POST /cancel` — all token-authenticated per docs/PLAN-P6.md §4.6), `colab_runner.py` (Ultralytics training driver that publishes events through the server's fan-out queue and honours cancellation requests between epochs).",
+      "**Shared wire-protocol module** — extracted the metric-key dictionaries, `_emit`, `safe_metric`, and `extract_metrics` into `server/vrl_yolo/engine/_runner_common.py`. Both `train_runner.py` (local subprocess) and `colab_runner.py` (Colab in-process) import from it, so when Ultralytics renames a metric key in a minor version the fix lands once instead of drifting silently between runners.",
+      "**Clinician-facing guide** — `docs/COLAB-GUIDE.md` walks through Drive layout for both tasks, where to find the Colab notebook URL, GPU runtime setup, config-cell editing, what to expect from the cell output, and how to paste the URL into the desktop modal that's coming in P6b. Includes a troubleshooting section for the common failure modes (stale tunnel URL, Drive auth re-prompt, missing GPU).",
+      "**End-to-end smoke test suite** — `tests/test_colab_server_smoke.py` spins up a real uvicorn instance and verifies token enforcement on every route, the `/status` JSON shape, the `best.pt` 409→200 transition once `complete` fires, WebSocket auth rejection, and event replay (events published before the WS connects are sent on subscribe so the desktop can disconnect/reconnect mid-run without losing history). Eight tests pass on a fresh checkout via `uv run --extra ml pytest tests/test_colab_server_smoke.py -q`.",
+    ],
+    fixes: [],
+    knownLimitations: [
+      "No desktop UI yet — `/train/configure` doesn't surface a *Run on Colab* button, and there's no *Connect to Colab* modal. Coming in P6b (`v0.8.9-p6b-colab-desktop`).",
+      "No reconnect-with-backoff on WebSocket drops. The current server replays on subscribe so reconnect-via-page-refresh works, but the desktop's auto-reconnect logic ships in P6c.",
+      "best.pt download isn't resumable. If the tunnel drops mid-download, the user re-clicks *Save to library*. Tracked for P6c polish.",
+      "Cloudflare quick-tunnels still print a new URL every cell run. Named tunnels with a stable URL are post-pilot — see docs/PLAN-P6.md §4.5.",
+    ],
+  },
+  {
     version: "0.8.7",
     phase: "P5.fix-7",
     title: "Bundle our own dist-info — version badge no longer reports `0.0.0+source`",
     tag: "v0.8.7",
     commit: "400ba79",
     date: "2026-05-19",
-    status: "current",
+    status: "shipped",
     features: [],
     fixes: [
       "**Top-right version badge now reports the real shipped version** (e.g. `v0.8.7`) instead of the `v0.0.0+source` fallback that every PyInstaller-bundled release from v0.8.5 through v0.8.6 was showing. Cause: PyInstaller's `--collect-submodules vrl_yolo` bundles our package's source but not its `dist-info` metadata, so `importlib.metadata.version(\"vrl-yolo-gui\")` raised `PackageNotFoundError` at runtime and `_resolve_version()` returned the placeholder. `Info.plist`'s `CFBundleShortVersionString` was always correct (PyInstaller writes it from the `--name` + read-from-pyproject path); only the runtime-read API version was wrong. /api/health is the load-bearing read — the topbar pulls it once on first paint.",

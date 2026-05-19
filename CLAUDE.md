@@ -17,7 +17,7 @@ background. Success = doctor installs one binary, drops a folder of slide
 patches, gets annotated images (detect) or a prediction table + PDF (classify)
 in under 10 minutes.
 
-**Status (v0.8.7, 2026-05-19):**
+**Status (v0.8.8, 2026-05-20):**
 - ✅ Pre — `CLAUDE.md` entry guide (`9bd0b83`)
 - ✅ **P0** — Scaffolding · `v0.1-p0-scaffolding` (`d06e9e2`)
 - ✅ **P1** — Predict (Detection) · `v0.2-p1-predict-detect` (`2acd8f5`)
@@ -39,7 +39,8 @@ in under 10 minutes.
 - ✅ P5.fix-5 — Graceful job cancel on Cmd+Q · `v0.8.5` — the macOS hard-exit path (`os._exit(0)` to bypass the QSurface static-destructor crash) used to orphan in-flight training subprocesses to launchd. New `_cancel_active_jobs_best_effort(fastapi_app, timeout_s=3.0)` helper now SIGTERMs every running/queued job (via the existing `JobManager.cancel`) and polls for clean exit before hard-exiting; wired into both the `QEvent::Close` filter and the `aboutToQuit` fallback. Closes carry-forward item #1.
 - ✅ P5.fix-6 — Preserve existing splits in the splitter · `v0.8.6` — Prepare splits used to always reshuffle every image, destroying hand-curated train/val/test assignments. New `preserve_existing` flag end-to-end (backend splitters → API → modal checkbox) lets images already in `train/`/`val|valid|validation/`/`test/` stay put; ratios then apply only to the flat / unassigned pool. Modal previews show `Train (X preserved + Y new = Z)` when preserve is on; greys out the Split button when there's nothing flat to redistribute. Inspector now reports `unassigned_image_count` so the modal can tell whether a mixed layout has anything to redistribute. Closes carry-forward item #3 — **all three carry-forwards now resolved**.
 - ✅ P5.fix-7 — Bundle our own dist-info (version badge fix) · `v0.8.7` — top-right version badge was reporting `v0.0.0+source` on all PyInstaller-bundled releases from v0.8.5 onward because `--collect-submodules vrl_yolo` bundles source but not `dist-info` metadata, so `importlib.metadata.version("vrl-yolo-gui")` raised `PackageNotFoundError` and `_resolve_version()` returned the placeholder. Added `--copy-metadata vrl-yolo-gui` to the PyInstaller args in `scripts/build-release.py`. One-line build-script change; no Python source change. Info.plist's `CFBundleShortVersionString` was always correct; only the runtime API read was broken.
-- ⏳ **P6 next** — Train on Colab: Cloudflare tunnel + Drive sync + companion notebooks for both tasks
+- ✅ **P6a** — Colab companion notebooks + runtime · `v0.8.8-p6a-colab-notebook` — five-cell `01_train_detect_colab.ipynb` + `02_train_classify_colab.ipynb` notebooks orchestrate Drive mount → repo clone → config edit → Cloudflare tunnel → training. Three runtime modules under `notebooks/_runtime/`: `colab_tunnel.py` (download + spawn cloudflared, parse trycloudflare URL), `colab_server.py` (FastAPI mini-server: token-authed `GET /status`, `WS /events` with replay-on-subscribe, `GET /best.pt`, `POST /cancel`), `colab_runner.py` (Ultralytics driver publishing events through the server). Shared wire-protocol module extracted to `server/vrl_yolo/engine/_runner_common.py` — both local + Colab runners import metric-key dicts + `extract_metrics` from it so version drift in Ultralytics lands one fix. End-to-end smoke verified via `tests/test_colab_server_smoke.py` (8 passing tests against a live uvicorn instance). Clinician guide at `docs/COLAB-GUIDE.md`.
+- ⏳ **P6b next** — Desktop *Run on Colab* integration: `engine/colab.py` + `JobManager.start_colab_job` + the *Connect to Colab* modal on `/train/configure`. Target tag `v0.8.9-p6b-colab-desktop`.
 
 **P3b also shipped three user-requested extras:**
 - Settings page (sidebar + localStorage hook)

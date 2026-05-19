@@ -41,71 +41,14 @@ Events:
 from __future__ import annotations
 
 import argparse
-import json
-import sys
-import time
 import traceback
 from pathlib import Path
 from typing import Any
 
-
-def _emit(event_type: str, **fields: Any) -> None:
-    """One JSON line on stdout. Sentinel key distinguishes from Ultralytics prints."""
-    payload = {"_VRL_EVENT": True, "type": event_type, "ts": time.time(), **fields}
-    sys.stdout.write(json.dumps(payload, default=str) + "\n")
-    sys.stdout.flush()
-
-
-def _safe_get(d: dict, key: str) -> float | None:
-    """Coerce a metric value into a JSON-friendly float, or None."""
-    v = d.get(key)
-    if v is None:
-        return None
-    try:
-        # Torch tensors → .item(); numpy scalars also work via float()
-        if hasattr(v, "item"):
-            v = v.item()
-        return float(v)
-    except (TypeError, ValueError):
-        return None
-
-
-# Ultralytics metric keys vary slightly by version. We probe several names
-# per logical key so the same wire shape works across 8.3 / 8.4 / 8.5+.
-_DETECT_METRIC_KEYS: dict[str, tuple[str, ...]] = {
-    "box_loss": ("train/box_loss",),
-    "cls_loss": ("train/cls_loss",),
-    "dfl_loss": ("train/dfl_loss",),
-    "mAP50": ("metrics/mAP50(B)", "metrics/mAP_0.5"),
-    "mAP50_95": ("metrics/mAP50-95(B)", "metrics/mAP_0.5:0.95"),
-}
-
-# Classify head exposes a single training loss + two validation accuracies.
-# Loss key was `train/loss` in 8.3 and is `train/cls_loss` in 8.4+.
-_CLASSIFY_METRIC_KEYS: dict[str, tuple[str, ...]] = {
-    "loss": ("train/loss", "train/cls_loss"),
-    "top1": ("metrics/accuracy_top1",),
-    "top5": ("metrics/accuracy_top5",),
-}
-
-
-def _extract_metrics(
-    metrics_dict: dict, *, task: str
-) -> dict[str, float | None]:
-    """Map Ultralytics' metric names → our stable wire keys."""
-    key_map = (
-        _CLASSIFY_METRIC_KEYS if task == "classify" else _DETECT_METRIC_KEYS
-    )
-    out: dict[str, float | None] = {}
-    for our_key, candidates in key_map.items():
-        value: float | None = None
-        for c in candidates:
-            v = _safe_get(metrics_dict, c)
-            if v is not None:
-                value = v
-                break
-        out[our_key] = value
-    return out
+from vrl_yolo.engine._runner_common import (
+    extract_metrics,
+    stdout_emitter as _emit,
+)
 
 
 def _resolve_data_arg(task: str, dataset_root: Path) -> str:
@@ -193,7 +136,7 @@ def main() -> int:
                 "epoch",
                 epoch=epoch_current,
                 epoch_total=int(args.epochs),
-                metrics=_extract_metrics(metrics_dict, task=args.task),
+                metrics=extract_metrics(metrics_dict, task=args.task),
             )
 
         yolo.add_callback("on_fit_epoch_end", on_fit_epoch_end)
@@ -221,7 +164,7 @@ def main() -> int:
         best_pt = Path(args.project) / args.name / "weights" / "best.pt"
         final_metrics: dict[str, float | None] = {}
         try:
-            final_metrics = _extract_metrics(
+            final_metrics = extract_metrics(
                 dict(getattr(results, "results_dict", {}) or {}),
                 task=args.task,
             )

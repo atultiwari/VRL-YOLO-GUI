@@ -1,7 +1,7 @@
 # Phase Status
 
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones).
-> Updated at the end of each phase boundary. **Last edit: 2026-05-19 (P5.fix-7 — bundle our own dist-info so the version badge reports correctly).**
+> Updated at the end of each phase boundary. **Last edit: 2026-05-20 (P6a — Colab companion notebooks + runtime; no desktop integration yet).**
 >
 > **Known limitations and deferred work** live in
 > [`docs/CARRY-FORWARDS.md`](CARRY-FORWARDS.md) — full diagnoses + fix
@@ -32,13 +32,15 @@
 | P5.fix-5 — Graceful job cancel on Cmd+Q | ✅ done | `v0.8.5` | `9159d0e` |
 | P5.fix-6 — Preserve existing splits in the splitter | ✅ done | `v0.8.6` | `c5ae06e` |
 | P5.fix-7 — Bundle our own dist-info (version badge fix) | ✅ done | `v0.8.7` | `400ba79` |
-| P6 — Train on Colab | ⏳ next | — | — |
+| **P6a — Colab companion notebooks + runtime** | ✅ done | `v0.8.8-p6a-colab-notebook` | PENDING |
+| P6b — Desktop *Run on Colab* integration | ⏳ next | — | — |
+| P6c — Polish + end-to-end pilot test | ⏳ pending | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at the P5 commit (`v0.8-p5-train-classify`). **Next phase:** P6 — Train on Colab: bring the existing detect + classify training paths to a Google Colab runtime via Cloudflare tunnel + Drive sync (PLAN.md §11), so unaccelerated machines stop being a dead-end on `/train/configure`.
+**Current head:** `main` at the P6a commit (`v0.8.8-p6a-colab-notebook`). **Next sub-phase:** P6b — Desktop *Run on Colab* integration: surface a `Run on Colab` callout on `/train/configure` when the accelerator probe returns `cpu`, add a `Connect to Colab` modal that takes a tunnel URL + connects via WebSocket, and route the resulting job through `JobManager.start_colab_job` so `/train/run` works unchanged. Spec: [`docs/PLAN-P6.md`](PLAN-P6.md) §3.
 
 ---
 
