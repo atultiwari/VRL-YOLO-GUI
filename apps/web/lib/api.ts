@@ -205,6 +205,13 @@ export interface SplitDatasetArgs {
   validRatio: number;
   testRatio: number;
   seed: number;
+  /**
+   * When true, images that already live in a `train/`, `val|valid|
+   * validation/`, or `test/` subtree stay in that split — ratios only
+   * redistribute the flat / unassigned pool. Default false (reshuffle
+   * everything).
+   */
+  preserveExisting?: boolean;
 }
 
 /**
@@ -230,6 +237,7 @@ export async function splitDataset(
       valid_ratio: args.validRatio,
       test_ratio: args.testRatio,
       seed: args.seed,
+      preserve_existing: args.preserveExisting ?? false,
     }),
   });
 }

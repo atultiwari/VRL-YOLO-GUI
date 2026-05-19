@@ -17,7 +17,7 @@ background. Success = doctor installs one binary, drops a folder of slide
 patches, gets annotated images (detect) or a prediction table + PDF (classify)
 in under 10 minutes.
 
-**Status (v0.8.5, 2026-05-18):**
+**Status (v0.8.6, 2026-05-19):**
 - ✅ Pre — `CLAUDE.md` entry guide (`9bd0b83`)
 - ✅ **P0** — Scaffolding · `v0.1-p0-scaffolding` (`d06e9e2`)
 - ✅ **P1** — Predict (Detection) · `v0.2-p1-predict-detect` (`2acd8f5`)
@@ -37,6 +37,7 @@ in under 10 minutes.
 - ✅ P5.fix-3 — Flat ImageFolder + classify splitter + layout examples · `v0.8.3` — inspector now accepts `<root>/<class>/*.jpg` (was train/<class>/ only); `split_imagefolder` stratifies per class into train/val/test for Ultralytics' classify mode; `/train/dataset` shows a collapsible card with 4 ASCII layout examples. Verified end-to-end against `/Users/atultiwari/Downloads/Projects/Datasets/lung_colon_image_set/lung_partial`.
 - ✅ P5.fix-4 — Subprocess env-var dispatch · `v0.8.4` — frozen `.app` bootloader ignores `-m module`, so `[sys.executable, "-m", "vrl_yolo.engine.train_runner", ...]` was booting a second Pyloid window and leaving training stuck at epoch 0. Now `main.py::_maybe_dispatch_subprocess` reads `VRL_YOLO_GUI_SUBPROCESS=train_runner` after `freeze_support()` and dispatches to runner directly. Both detect and classify smoke-passed in dev via the same path the frozen binary uses.
 - ✅ P5.fix-5 — Graceful job cancel on Cmd+Q · `v0.8.5` — the macOS hard-exit path (`os._exit(0)` to bypass the QSurface static-destructor crash) used to orphan in-flight training subprocesses to launchd. New `_cancel_active_jobs_best_effort(fastapi_app, timeout_s=3.0)` helper now SIGTERMs every running/queued job (via the existing `JobManager.cancel`) and polls for clean exit before hard-exiting; wired into both the `QEvent::Close` filter and the `aboutToQuit` fallback. Closes carry-forward item #1.
+- ✅ P5.fix-6 — Preserve existing splits in the splitter · `v0.8.6` — Prepare splits used to always reshuffle every image, destroying hand-curated train/val/test assignments. New `preserve_existing` flag end-to-end (backend splitters → API → modal checkbox) lets images already in `train/`/`val|valid|validation/`/`test/` stay put; ratios then apply only to the flat / unassigned pool. Modal previews show `Train (X preserved + Y new = Z)` when preserve is on; greys out the Split button when there's nothing flat to redistribute. Inspector now reports `unassigned_image_count` so the modal can tell whether a mixed layout has anything to redistribute. Closes carry-forward item #3 — **all three carry-forwards now resolved**.
 - ⏳ **P6 next** — Train on Colab: Cloudflare tunnel + Drive sync + companion notebooks for both tasks
 
 **P3b also shipped three user-requested extras:**

@@ -503,15 +503,61 @@ function SplitModal({
   // class). Using min() everywhere would have collapsed classify totals
   // to 0 because label_count = 0 for ImageFolder splits.
   const isClassify = dataset.task === "classify";
-  const totalPairs = useMemo(() => {
-    if (isClassify) {
-      return dataset.splits.reduce((acc, s) => acc + s.image_count, 0);
+  const splitSize = (s: { image_count: number; label_count: number }) =>
+    isClassify ? s.image_count : Math.min(s.image_count, s.label_count);
+  const totalPairs = useMemo(
+    () =>
+      dataset.splits.reduce((acc, s) => acc + splitSize(s), 0) +
+      (dataset.unassigned_image_count ?? 0),
+    // splitSize is stable across renders (depends only on isClassify)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dataset, isClassify],
+  );
+
+  // Partition the inspector's reported splits into "preserved" (named
+  // train / val / valid / validation / test) and "flat" (the "all"
+  // pseudo-split, or anything else the inspector emits). This is what
+  // the backend's _existing_split_for sees on its side; keeping the two
+  // models in lockstep means the preview the user sees here matches
+  // what split_dataset/split_imagefolder actually does.
+  const SPLIT_NAMES = ["train", "val", "valid", "validation", "test"];
+  const preservedCounts = useMemo(() => {
+    const out = { train: 0, valid: 0, test: 0 };
+    for (const s of dataset.splits) {
+      const name = s.name.toLowerCase();
+      const size = splitSize(s);
+      if (name === "train") out.train += size;
+      else if (name === "val" || name === "valid" || name === "validation")
+        out.valid += size;
+      else if (name === "test") out.test += size;
     }
-    return dataset.splits.reduce(
-      (acc, s) => acc + Math.min(s.image_count, s.label_count),
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset, isClassify]);
+  const flatCount = useMemo(() => {
+    // Prefer the backend's authoritative `unassigned_image_count` —
+    // covers the mixed-layout case where `dataset.splits` only reports
+    // the recognised split shape and hides flat siblings. Fall back to
+    // counting "all" / non-standard splits for backward compatibility
+    // and the pure-flat case (where splits = [{name: "all", ...}] and
+    // the backend reports unassigned_image_count = 0 because every
+    // image IS the dataset, not an extra-on-top-of-splits pool).
+    const fromSplits = dataset.splits.reduce(
+      (acc, s) =>
+        SPLIT_NAMES.includes(s.name.toLowerCase()) ? acc : acc + splitSize(s),
       0,
     );
+    return fromSplits + (dataset.unassigned_image_count ?? 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataset, isClassify]);
+  const hasExistingSplits =
+    preservedCounts.train + preservedCounts.valid + preservedCounts.test > 0;
+
+  // Default checkbox state: ON when the dataset already has at least
+  // one recognised split, OFF on a pure flat-layout drop. Smart-default
+  // chosen per the design discussion — power user with a curated
+  // Roboflow export shouldn't have to remember to tick the box.
+  const [preserveExisting, setPreserveExisting] = useState(hasExistingSplits);
 
   const onTrainChange = (v: number) => {
     const next = Math.max(1, Math.min(99, Math.round(v)));
@@ -542,6 +588,7 @@ function SplitModal({
         validRatio: valid / 100,
         testRatio: test / 100,
         seed,
+        preserveExisting,
       });
       onSplit(updated);
     } catch (err) {
@@ -557,9 +604,20 @@ function SplitModal({
     }
   };
 
-  const previewTrain = Math.round((train / 100) * totalPairs);
-  const previewValid = Math.round((valid / 100) * totalPairs);
-  const previewTest = totalPairs - previewTrain - previewValid;
+  // When preserve is ON, ratios apply to the flat pool only; the
+  // preserved counts pass through unchanged. When OFF, the ratios apply
+  // to the whole dataset as before.
+  const distributionPool = preserveExisting ? flatCount : totalPairs;
+  const newTrain = Math.round((train / 100) * distributionPool);
+  const newValid = Math.round((valid / 100) * distributionPool);
+  const newTest = distributionPool - newTrain - newValid;
+  const previewTrain = preserveExisting ? preservedCounts.train + newTrain : newTrain;
+  const previewValid = preserveExisting ? preservedCounts.valid + newValid : newValid;
+  const previewTest = preserveExisting ? preservedCounts.test + newTest : newTest;
+
+  const noFlatToRedistribute = preserveExisting && flatCount === 0;
+  const cantSubmit =
+    running || train + valid + test !== 100 || noFlatToRedistribute;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -599,8 +657,41 @@ function SplitModal({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {hasExistingSplits ? (
+            <label className="flex items-start gap-2 rounded-md border border-surface-muted bg-surface-subtle px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                checked={preserveExisting}
+                onChange={(e) => setPreserveExisting(e.target.checked)}
+                className="mt-0.5"
+                disabled={running}
+              />
+              <span>
+                <span className="font-medium text-ink">
+                  Preserve existing train / {isClassify ? "val" : "valid"} / test assignments
+                </span>
+                <span className="ml-1 text-ink-muted">
+                  — only redistribute flat / unassigned images per the ratios below.
+                  Useful when you&apos;ve hand-curated splits and just want to add
+                  newly-uploaded images.
+                </span>
+              </span>
+            </label>
+          ) : null}
+          {noFlatToRedistribute ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <AlertTriangle className="mr-2 inline-block size-4 align-text-bottom" />
+              Every image is already in a split — nothing to redistribute.
+              Uncheck Preserve to reshuffle from scratch.
+            </div>
+          ) : null}
           <Slider
-            label={`Train (${previewTrain} images)`}
+            label={renderSplitLabel({
+              name: "Train",
+              preserved: preserveExisting ? preservedCounts.train : 0,
+              added: newTrain,
+              showSplit: preserveExisting,
+            })}
             value={train}
             min={1}
             max={99}
@@ -609,7 +700,12 @@ function SplitModal({
             onChange={onTrainChange}
           />
           <Slider
-            label={`${isClassify ? "Val" : "Valid"} (${previewValid} images)`}
+            label={renderSplitLabel({
+              name: isClassify ? "Val" : "Valid",
+              preserved: preserveExisting ? preservedCounts.valid : 0,
+              added: newValid,
+              showSplit: preserveExisting,
+            })}
             value={valid}
             min={0}
             max={100 - train}
@@ -625,7 +721,10 @@ function SplitModal({
           <div className="flex items-baseline justify-between text-sm">
             <span className="text-ink">Test</span>
             <span className="tabular-nums font-medium text-ink">
-              {test}% &nbsp;&middot;&nbsp; {previewTest} images
+              {test}% &nbsp;&middot;&nbsp;{" "}
+              {preserveExisting && preservedCounts.test > 0
+                ? `${preservedCounts.test} preserved + ${newTest} new = ${previewTest} images`
+                : `${previewTest} images`}
             </span>
           </div>
           <div>
@@ -652,7 +751,7 @@ function SplitModal({
             <Button variant="ghost" disabled={running} onClick={onClose}>
               Cancel
             </Button>
-            <Button disabled={running || train + valid + test !== 100} onClick={submit}>
+            <Button disabled={cantSubmit} onClick={submit}>
               {running ? (
                 <>
                   <Spinner /> Splitting…
@@ -668,6 +767,25 @@ function SplitModal({
       </Card>
     </div>
   );
+}
+
+function renderSplitLabel(opts: {
+  name: string;
+  preserved: number;
+  added: number;
+  showSplit: boolean;
+}): string {
+  // When preserve is ON AND there's something to preserve in this split,
+  // show the breakdown so the user sees what the ratio is actually doing.
+  // Otherwise fall back to the simple "Train (95 images)" form.
+  if (opts.showSplit && opts.preserved > 0) {
+    const total = opts.preserved + opts.added;
+    return `${opts.name} (${opts.preserved} preserved + ${opts.added} new = ${total} images)`;
+  }
+  if (opts.showSplit) {
+    return `${opts.name} (${opts.added} new images)`;
+  }
+  return `${opts.name} (${opts.added} images)`;
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

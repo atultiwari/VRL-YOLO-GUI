@@ -146,6 +146,14 @@ export interface DatasetInfo {
   classes: string[];
   class_counts: Record<string, number>;
   warnings: string[];
+  /**
+   * Images at the dataset root that aren't in any train / val / test
+   * subtree. Surfaced so the Prepare-splits modal can tell whether
+   * "preserve existing" actually has anything flat to redistribute,
+   * without an extra round-trip. Defaults to 0 if the backend omits it
+   * (older API responses); the modal handles that gracefully.
+   */
+  unassigned_image_count?: number;
 }
 
 export interface HardwareInfo {

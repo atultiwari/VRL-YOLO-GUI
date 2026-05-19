@@ -49,6 +49,7 @@ def _to_out(info) -> DatasetInfoOut:  # noqa: ANN001 — engine.dataset.DatasetI
         classes=list(info.classes),
         class_counts=dict(info.class_counts),
         warnings=list(info.warnings),
+        unassigned_image_count=info.unassigned_image_count,
     )
 
 
@@ -155,6 +156,7 @@ def split_dataset_endpoint(
                 valid_ratio=body.valid_ratio,
                 test_ratio=body.test_ratio,
                 seed=body.seed,
+                preserve_existing=body.preserve_existing,
             )
         else:
             info = split_dataset(
@@ -163,6 +165,7 @@ def split_dataset_endpoint(
                 valid_ratio=body.valid_ratio,
                 test_ratio=body.test_ratio,
                 seed=body.seed,
+                preserve_existing=body.preserve_existing,
             )
     except ValueError as exc:
         raise HTTPException(

@@ -192,6 +192,12 @@ class DatasetInfoOut(BaseModel):
     classes: list[str]
     class_counts: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    # Images at the root that aren't in any train/val/test subtree.
+    # Frontend uses this to decide whether "preserve existing splits"
+    # has anything flat to redistribute (avoids a backend round-trip
+    # just to learn there's nothing to do). Zero for both pure-flat
+    # layouts and pure-split layouts.
+    unassigned_image_count: int = 0
 
 
 class HardwareInfo(BaseModel):
@@ -210,12 +216,19 @@ class SplitDatasetRequest(BaseModel):
     Defaults match the Roboflow recommendation (80 / 10 / 10). The
     backend tolerates ±0.001 drift in the sum to forgive frontend
     rounding (sliders multiplied by 100 + division by 100, etc.).
+
+    `preserve_existing=True` keeps images already in `train/`, `val|valid|
+    validation/`, or `test/` subtrees in their current split; ratios then
+    apply only to the flat / unassigned pool. Defaults to False so the
+    historical reshuffle-everything behaviour is unchanged for callers
+    that don't opt in.
     """
 
     train_ratio: float = Field(0.8, ge=0.0, le=1.0)
     valid_ratio: float = Field(0.1, ge=0.0, le=1.0)
     test_ratio: float = Field(0.1, ge=0.0, le=1.0)
     seed: int = 42
+    preserve_existing: bool = False
 
 
 class RenameClassesRequest(BaseModel):

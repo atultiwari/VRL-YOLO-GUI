@@ -1,7 +1,7 @@
 # Phase Status
 
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones).
-> Updated at the end of each phase boundary. **Last edit: 2026-05-18 (P5.fix-5 — graceful job cancel on Cmd+Q).**
+> Updated at the end of each phase boundary. **Last edit: 2026-05-19 (P5.fix-6 — preserve existing splits in the splitter).**
 >
 > **Known limitations and deferred work** live in
 > [`docs/CARRY-FORWARDS.md`](CARRY-FORWARDS.md) — full diagnoses + fix
@@ -30,6 +30,7 @@
 | P5.fix-3 — Flat ImageFolder + classify splitter + layout examples | ✅ done | `v0.8.3` | `72dc1db` |
 | P5.fix-4 — Subprocess env-var dispatch (frozen `-m` bug) | ✅ done | `v0.8.4` | `a86da1b` |
 | P5.fix-5 — Graceful job cancel on Cmd+Q | ✅ done | `v0.8.5` | `9159d0e` |
+| P5.fix-6 — Preserve existing splits in the splitter | ✅ done | `v0.8.6` | `TBD` |
 | P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
@@ -549,7 +550,25 @@ In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runne
 
 **Carried-forward:**
 - Linux / Windows still orphan the training subprocess on app quit. Pilot is macOS-only; revisit when we ship for those platforms.
-- Skill `python-pyloid-desktop-packaging` still doesn't document this pattern — tracked separately as carry-forward item #2.
+- Skill `python-pyloid-desktop-packaging` still doesn't document this pattern — tracked separately as carry-forward item #2. **Closed 2026-05-19 — skill updated in place.**
+
+### ✅ P5.fix-6 — Preserve existing splits in the splitter · `v0.8.6` · `TBD`
+
+**Trigger:** carry-forward item #3. Up to v0.8.5, `split_dataset` (detect) and `split_imagefolder` (classify) gathered every image from anywhere under the dataset root, shuffled by seed, and redistributed — destroying any hand-curated train/val/test assignments. A user with a Roboflow export who just wanted to add a test split couldn't, and a clinical-research user who placed the hardest cases in `val/` on purpose lost that curation as soon as Prepare splits ran. Flagged in v0.8.3 docs as Option A's "Preserve existing splits" toggle; deferred at the time because pilot exposure was unclear.
+
+**Fix:** add a `preserve_existing` flag end-to-end (backend splitter → API schema → frontend lib → modal UI), plus a typed `unassigned_image_count` on `DatasetInfoOut` so the frontend can tell whether Preserve has anything flat to redistribute in a mixed layout.
+
+| # | Subject | Outcome |
+|---|---|---|
+| P5.fix-6.1 | Splitter internals tag each image with its current split | `_find_image_label_pairs` returns `(img, lbl, current_split)` tuples; `_collect_imagefolder_images` returns `dict[class, list[(path, current_split)]]`. Both share `_existing_split_for(img, root, val_output_name=...)` which walks path components looking for `train` / `valid|val|validation` / `test`. The `val_output_name` parameter lets the detect splitter normalise to `valid` and the classify splitter to `val`, matching each task's output convention. |
+| P5.fix-6.2 | `split_dataset` and `split_imagefolder` take `preserve_existing: bool = False` | When True: partition pairs into preserved (current_split in {train, valid/val, test}) vs flat (None); the flat pool gets shuffled + distributed per ratios; preserved pairs keep their original split. Classify keeps per-class stratification but applies it to each class's flat pool, with the same `max(1, ...)` train-minimum guarantee per class. If `total_flat == 0` after partitioning, raise `ValueError("preserve_existing=True but every image is already in a split — nothing to redistribute. Uncheck Preserve to reshuffle from scratch.")` so the API can 400 cleanly. |
+| P5.fix-6.3 | API surface: `SplitDatasetRequest.preserve_existing` + DatasetInfoOut `unassigned_image_count` | The schema field forwards through the route to the splitter. The new `unassigned_image_count` is populated by `_imagefolder_split_layout` (scans non-reserved sibling dirs) and `_inspect_roboflow_yolo` (scans `<root>/images/`) so a mixed layout reports correctly. Default 0 means "either pure-flat" or "pure-split"; both inspector paths that don't hit a mixed case leave it at the default. |
+| P5.fix-6.4 | Frontend SplitModal | New checkbox above sliders. Default ON when the dataset has any recognised split, OFF for a flat layout. When ON: slider labels show `Train (X preserved + Y new = Z images)`; Split button disabled with hint if `flatCount === 0` (computed from `unassigned_image_count` + any non-standard splits). When OFF: behaviour identical to v0.8.5. Test row gets the same preserved-vs-new breakdown. Type added to `lib/types.ts::DatasetInfo` as optional so older API responses don't fail validation. |
+| P5.fix-6.5 | End-to-end smoke | 7-case battery in dev: classify (pure flat / pure split / mixed preserve / pure-split preserve raises), detect (pure flat / mixed preserve / pure-split preserve raises). All pass. FastAPI TestClient verified `unassigned_image_count=6` on both detect and classify mixed layouts, and that preserve=True with no flat returns a 400 with the helpful detail string. Frontend `tsc --noEmit` is clean. |
+
+**Carried-forward:**
+- The splits view on `/train/dataset` still doesn't surface the unassigned image count outside the Prepare-splits modal. A user with a mixed layout sees `train: 10 · val: 4` on the page and might not realise 6 flat images exist. Not blocking pilot; small follow-up if pilot feedback flags it.
+- Preserve doesn't carve a test split out of an existing train+val pair (a different semantic operation entirely; out of scope here).
 
 ---
 

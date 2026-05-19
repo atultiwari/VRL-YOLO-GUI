@@ -4,7 +4,7 @@
 > shipped versions. Each item is a real gap, not a bug we don't know about.
 > Sorted by likelihood of hitting in real use, not by complexity.
 >
-> **Last edit: 2026-05-19 (skill `python-pyloid-desktop-packaging` corrected — item #2 closed; 1 item remains open).**
+> **Last edit: 2026-05-19 (item #3 closed in v0.8.6 / P5.fix-6 — splitter now supports preserve-existing-splits. All deferred items resolved.).**
 
 Each entry is self-contained so a future session can pick it up cold without
 re-reading the whole P5 fix chain.
@@ -238,7 +238,7 @@ repeat the same diagnostic loop. Promote VRL-YOLO-GUI's
 
 | | |
 |---|---|
-| **Status** | Open, deferred |
+| **Status** | ✅ Resolved 2026-05-19 in v0.8.6 / P5.fix-6 — see [Resolved section](#resolved) below |
 | **First flagged** | v0.8.3 / P5.fix-3 |
 | **Severity** | Low — only affects users with curated splits |
 | **Blocks pilot?** | Probably not, but worth confirming with pilot users |
@@ -474,6 +474,63 @@ focused on what's actually pending.
 
 **Carry-forwards from the fix itself**: none. The skill is now the
 single source of truth again for new Pyloid projects.
+
+### ✅ Item #3 — Splitter is all-or-nothing
+
+| | |
+|---|---|
+| **Closed in** | v0.8.6 / P5.fix-6 (2026-05-19) |
+| **Time open** | v0.8.3 → v0.8.5 (3 successive releases lived with the all-or-nothing splitter) |
+| **Path taken** | Option A (preserve-existing checkbox in modal, default OFF). Sub-decisions agreed during the design pass: smart default = ON when dataset has any recognised split / OFF for flat layout; empty case = disable submit + hint (no backend round-trip); slider labels = "X preserved + Y new = Z" when preserve ON. |
+
+**What landed** (full detail in `docs/PHASE-STATUS.md` P5.fix-6 section,
+`CHANGELOG.md` 0.8.6, and the `fix(p5.fix-6):` commit):
+
+- **Backend splitter rewrite.** `_find_image_label_pairs` and
+  `_collect_imagefolder_images` now tag each image with its current
+  split (or `None` for flat); both share `_existing_split_for(img,
+  root, val_output_name=...)` for path-component recognition,
+  normalised to each task's output convention (`valid` for detect,
+  `val` for classify). `split_dataset` and `split_imagefolder` take
+  `preserve_existing: bool = False`; when True, preserved images skip
+  the shuffle and ratios apply only to the flat pool. Classify keeps
+  per-class stratification on the flat pool with the existing
+  `max(1, ...)` train-minimum guarantee. Raises a typed `ValueError`
+  with the message `"preserve_existing=True but every image is already
+  in a split — nothing to redistribute. Uncheck Preserve to reshuffle
+  from scratch."` when there's nothing flat (mapped to 400 by the route).
+- **New `unassigned_image_count` on `DatasetInfoOut`.** Inspector paths
+  (`_imagefolder_split_layout` + `_inspect_roboflow_yolo`) now count
+  flat images that coexist with a split layout. Without this, the
+  modal's flat-count derivation would silently miss them in mixed
+  layouts and disable the Split button incorrectly. Default 0 so old
+  API responses degrade gracefully; the frontend has a `?? 0` fallback.
+- **SplitDatasetRequest** got `preserve_existing: bool = False`.
+- **Frontend `SplitModal`** gained the checkbox + the
+  "X preserved + Y new = Z" slider labels + the empty-case guard. The
+  default state is ON when `hasExistingSplits` (any split with name in
+  {train, val, valid, validation, test}), OFF otherwise.
+- **Verification:** 7-case smoke battery (classify pure-flat/pure-split/
+  mixed-preserve/pure-split-preserve-raises; detect pure-flat/
+  mixed-preserve/pure-split-preserve-raises) all pass. FastAPI
+  TestClient confirms `unassigned_image_count` is reported correctly
+  for mixed layouts. Frontend `tsc --noEmit` is clean.
+
+**Why this path** over the alternatives:
+- Option B (refuse to re-split when splits already exist) ruled out
+  because it forces a destructive "delete first" step on the user for
+  what should be a non-destructive operation.
+- Option C (just surface the seed) ruled out — doesn't solve the
+  actual problem of preserving curated splits.
+- Option D (diff-aware splitting that's a no-op when sums match) ruled
+  out as too clever — different behaviour depending on user state is
+  surprising.
+
+**Carry-forwards from the fix itself**:
+- Splits view on `/train/dataset` doesn't show `unassigned_image_count`
+  outside the modal. Pilot-feedback-driven follow-up if confusing.
+- Doesn't carve a test split out of existing train (different
+  semantic operation; not what the splitter is for).
 
 ---
 

@@ -87,6 +87,13 @@ class DatasetInfo:
     # Empty when not derivable yet (plain YOLO without data.yaml).
     class_counts: dict[str, int] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
+    # Images present at the root that aren't in any recognised split
+    # subtree (train/, val|valid|validation/, test/). Used by the
+    # frontend's Prepare-splits modal to know whether "preserve existing"
+    # has any flat content to redistribute. Zero for pure-flat layouts
+    # (those report a single "all" split instead) and pure-split layouts
+    # (everything's already assigned).
+    unassigned_image_count: int = 0
 
     def to_json(self) -> dict:
         return {
@@ -98,6 +105,7 @@ class DatasetInfo:
             "classes": list(self.classes),
             "class_counts": dict(self.class_counts),
             "warnings": list(self.warnings),
+            "unassigned_image_count": self.unassigned_image_count,
         }
 
 
@@ -300,6 +308,18 @@ def _inspect_roboflow_yolo(
     ):
         warnings.append("Classes are declared in data.yaml but no .txt labels were found.")
 
+    # Mixed layout: flat `images/` at root alongside the split tree.
+    # Matches the detect splitter's _existing_split_for which treats
+    # path components not in {train, valid, val, validation, test} as
+    # flat. _yolo_splits already counts train/valid/test/; only the
+    # root-level images/ needs a separate scan.
+    unassigned = 0
+    flat_images_dir = root / "images"
+    if flat_images_dir.is_dir():
+        unassigned = sum(
+            1 for p in flat_images_dir.rglob("*") if p.suffix.lower() in _IMAGE_EXT
+        )
+
     return DatasetInfo(
         id=dataset_id,
         format="roboflow_yolo",
@@ -308,6 +328,7 @@ def _inspect_roboflow_yolo(
         splits=splits,
         classes=classes,
         warnings=tuple(warnings),
+        unassigned_image_count=unassigned,
     )
 
 
@@ -460,6 +481,22 @@ def _imagefolder_split_layout(
     if test_split is not None:
         splits.append(test_split)
 
+    # Mixed layout: count flat <root>/<class>/*.jpg dirs that exist
+    # alongside the split tree. The splitter discovers these via
+    # _collect_imagefolder_images even though they aren't part of any
+    # train/val/test subtree; surfacing the count here lets the modal
+    # know whether "preserve existing" actually has anything to do.
+    unassigned = 0
+    reserved = {"train", "val", "valid", "validation", "test", _STAGING_DIR_NAME}
+    for entry in root.iterdir():
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        if entry.name.lower() in reserved:
+            continue
+        unassigned += sum(
+            1 for p in entry.iterdir() if p.is_file() and p.suffix.lower() in _IMAGE_EXT
+        )
+
     warnings: list[str] = []
     if val_split is None:
         warnings.append(
@@ -480,6 +517,7 @@ def _imagefolder_split_layout(
         classes=tuple(sorted(class_counts.keys())),
         class_counts=class_counts,
         warnings=tuple(warnings),
+        unassigned_image_count=unassigned,
     )
 
 
@@ -592,8 +630,49 @@ _PRESERVED_ROOT_FILES: frozenset[str] = frozenset({
 _STAGING_DIR_NAME = "__vrl-split-staging__"
 
 
-def _find_image_label_pairs(root: Path) -> list[tuple[Path, Path | None]]:
-    """Collect every image in the dataset and pair it with its YOLO label.
+# Output-side split name for any of {"val", "valid", "validation"} input
+# directories. `split_dataset` (detect) writes the Roboflow-standard
+# `valid/`; `split_imagefolder` (classify) writes Ultralytics' `val/`.
+# `_existing_split_for` returns the *output* name so the splitter can
+# preserve an image regardless of what folder shape it arrived in.
+_DETECT_VAL_OUTPUT = "valid"
+_CLASSIFY_VAL_OUTPUT = "val"
+
+
+def _existing_split_for(
+    image_path: Path, root: Path, *, val_output_name: str
+) -> str | None:
+    """Determine which split an image currently lives in, if any.
+
+    Walks the path components between `image_path` and `root` looking for
+    a known split-directory name. Returns the *output* name we'd use
+    after splitting (so `valid`/`val`/`validation` all normalise to
+    whichever output convention the calling splitter uses), or `None`
+    for images that aren't in any recognised split (flat / unassigned).
+
+    Used by both splitters when `preserve_existing=True` so an image at
+    `train/images/x.jpg` (detect) or `train/<class>/x.jpg` (classify)
+    stays in `train/` after the split rather than being reshuffled.
+    """
+    try:
+        rel = image_path.relative_to(root)
+    except ValueError:
+        return None
+    for part in rel.parts:
+        lower = part.lower()
+        if lower == "train":
+            return "train"
+        if lower in _VAL_DIR_CANDIDATES:
+            return val_output_name
+        if lower == "test":
+            return "test"
+    return None
+
+
+def _find_image_label_pairs(
+    root: Path,
+) -> list[tuple[Path, Path | None, str | None]]:
+    """Collect every image, pair with its YOLO label, tag its current split.
 
     YOLO's convention is that labels live in a sibling `labels/` directory
     named after the image's `images/` directory (e.g. `train/images/x.jpg`
@@ -608,8 +687,14 @@ def _find_image_label_pairs(root: Path) -> list[tuple[Path, Path | None]]:
     `None`) so the caller can warn / decide what to do. Splitter
     currently moves the image without a label; YOLO treats those as
     background.
+
+    The third tuple element is the image's CURRENT split (`"train"`,
+    `"valid"`, `"test"`, or `None` for flat / unassigned), normalised
+    to the detect splitter's output convention so a `preserve_existing`
+    pass can put it back in the same split it came from. The value is
+    irrelevant when the splitter reshuffles from scratch.
     """
-    pairs: list[tuple[Path, Path | None]] = []
+    pairs: list[tuple[Path, Path | None, str | None]] = []
     for img in sorted(root.rglob("*")):
         if not img.is_file() or img.suffix.lower() not in _IMAGE_EXT:
             continue
@@ -618,29 +703,32 @@ def _find_image_label_pairs(root: Path) -> list[tuple[Path, Path | None]]:
         if _STAGING_DIR_NAME in img.parts:
             continue
 
+        current_split = _existing_split_for(
+            img, root, val_output_name=_DETECT_VAL_OUTPUT
+        )
         stem = img.stem
         # 1. Same-dir sibling .txt
         candidate = img.with_suffix(".txt")
         if candidate.is_file():
-            pairs.append((img, candidate))
+            pairs.append((img, candidate, current_split))
             continue
         # 2. Sibling `labels/` next to the image's `images/` dir
         if img.parent.name == "images":
             candidate = img.parent.parent / "labels" / f"{stem}.txt"
             if candidate.is_file():
-                pairs.append((img, candidate))
+                pairs.append((img, candidate, current_split))
                 continue
         # 3. labels/ at root
         candidate = root / "labels" / f"{stem}.txt"
         if candidate.is_file():
-            pairs.append((img, candidate))
+            pairs.append((img, candidate, current_split))
             continue
-        pairs.append((img, None))
+        pairs.append((img, None, current_split))
     return pairs
 
 
 def _infer_class_names_from_labels(
-    pairs: Iterable[tuple[Path, Path | None]],
+    pairs: Iterable[tuple[Path, Path | None, str | None]],
 ) -> list[str]:
     """Walk YOLO label files, infer placeholder class names from indices.
 
@@ -650,7 +738,7 @@ def _infer_class_names_from_labels(
     user can rename them on the configure page (lands in P4b).
     """
     max_id = -1
-    for _, lbl in pairs:
+    for _, lbl, _ in pairs:
         if lbl is None:
             continue
         try:
@@ -706,6 +794,7 @@ def split_dataset(
     valid_ratio: float,
     test_ratio: float,
     seed: int = 42,
+    preserve_existing: bool = False,
 ) -> DatasetInfo:
     """Reorganise a YOLO-shaped dataset into clean train / valid / test splits.
 
@@ -722,6 +811,14 @@ def split_dataset(
     READMEs, LICENSE) stay untouched. data.yaml is rewritten at the end
     with the new split paths and the class names inherited from the old
     yaml (or inferred from label indices when no yaml existed).
+
+    When ``preserve_existing=True``, images that already live in a
+    ``train/``, ``valid/`` (or ``val/``/``validation/``), or ``test/``
+    subtree stay in that split; only flat / unassigned images get
+    distributed per the ratios. Useful for "I have a curated train+val
+    and just want to add a test split from new uploads" without losing
+    the hand-curated split decisions. Default ``False`` keeps the
+    original reshuffle-everything behaviour.
 
     Stages files inside `<root>/__vrl-split-staging__/` for the duration
     of the move so a partial run never leaves the dataset half-split. On
@@ -747,7 +844,7 @@ def split_dataset(
     pairs = _find_image_label_pairs(dataset_root)
     if not pairs:
         raise ValueError("no images found — nothing to split")
-    paired = sum(1 for _, lbl in pairs if lbl is not None)
+    paired = sum(1 for _, lbl, _ in pairs if lbl is not None)
     if paired == 0:
         raise ValueError(
             "no image+label pairs found — every image must have a matching .txt"
@@ -757,22 +854,58 @@ def split_dataset(
     if not class_names:
         class_names = _infer_class_names_from_labels(pairs)
 
-    # Shuffle by seed for reproducible splits.
+    # Partition by current split when preserving. Flat images get
+    # shuffled + distributed per ratios; preserved images keep their
+    # original split. When preserve_existing=False this falls through to
+    # the historical "reshuffle everything" path.
     rng = random.Random(seed)
-    shuffled = list(pairs)
-    rng.shuffle(shuffled)
+    if preserve_existing:
+        preserved_by_split: dict[
+            str, list[tuple[Path, Path | None, str | None]]
+        ] = {"train": [], _DETECT_VAL_OUTPUT: [], "test": []}
+        flat: list[tuple[Path, Path | None, str | None]] = []
+        for item in pairs:
+            _, _, current = item
+            if current in preserved_by_split:
+                preserved_by_split[current].append(item)
+            else:
+                flat.append(item)
+        if not flat:
+            raise ValueError(
+                "preserve_existing=True but every image is already in a split — "
+                "nothing to redistribute. Uncheck Preserve to reshuffle from scratch."
+            )
+        rng.shuffle(flat)
+        n = len(flat)
+        n_train = int(round(n * train_ratio))
+        n_valid = int(round(n * valid_ratio))
+        n_train = min(n_train, n)
+        n_valid = min(n_valid, n - n_train)
+        n_test = n - n_train - n_valid
+        train_pairs = preserved_by_split["train"] + flat[:n_train]
+        valid_pairs = (
+            preserved_by_split[_DETECT_VAL_OUTPUT] + flat[n_train : n_train + n_valid]
+        )
+        test_pairs = (
+            preserved_by_split["test"]
+            + flat[n_train + n_valid : n_train + n_valid + n_test]
+        )
+    else:
+        # Shuffle by seed for reproducible splits.
+        shuffled = list(pairs)
+        rng.shuffle(shuffled)
 
-    n = len(shuffled)
-    n_train = int(round(n * train_ratio))
-    n_valid = int(round(n * valid_ratio))
-    # Test absorbs the residual so the three counts always sum to `n`.
-    n_train = min(n_train, n)
-    n_valid = min(n_valid, n - n_train)
-    n_test = n - n_train - n_valid
+        n = len(shuffled)
+        n_train = int(round(n * train_ratio))
+        n_valid = int(round(n * valid_ratio))
+        # Test absorbs the residual so the three counts always sum to `n`.
+        n_train = min(n_train, n)
+        n_valid = min(n_valid, n - n_train)
+        n_test = n - n_train - n_valid
 
-    train_pairs = shuffled[:n_train]
-    valid_pairs = shuffled[n_train : n_train + n_valid]
-    test_pairs = shuffled[n_train + n_valid : n_train + n_valid + n_test]
+        train_pairs = shuffled[:n_train]
+        valid_pairs = shuffled[n_train : n_train + n_valid]
+        test_pairs = shuffled[n_train + n_valid : n_train + n_valid + n_test]
 
     staging = dataset_root / _STAGING_DIR_NAME
     if staging.exists():
@@ -791,7 +924,7 @@ def split_dataset(
             lbl_dir = staging / split_name / "labels"
             img_dir.mkdir(parents=True)
             lbl_dir.mkdir(parents=True)
-            for img, lbl in split_pairs:
+            for img, lbl, _current in split_pairs:
                 # Move-then-rename guards against same-basename collisions
                 # across the input layout (rare, but Roboflow uses unique
                 # suffixes so we wouldn't see them — still worth being
@@ -856,6 +989,7 @@ def split_imagefolder(
     valid_ratio: float,
     test_ratio: float,
     seed: int = 42,
+    preserve_existing: bool = False,
 ) -> DatasetInfo:
     """Reorganise an ImageFolder dataset into clean train/val/test splits.
 
@@ -878,6 +1012,13 @@ def split_imagefolder(
 
     Output uses ``val/`` (not ``valid/``) because that's the canonical
     name Ultralytics' ClassificationDataset loader expects.
+
+    When ``preserve_existing=True``, images already in a ``train/``,
+    ``val/`` (or ``valid/``/``validation/``), or ``test/`` subtree stay
+    in that split; only flat images get redistributed per the ratios.
+    Stratification still applies — the per-class shuffle runs over each
+    class's flat pool. Raises ``ValueError`` if every image is already
+    assigned (caller should disable submit before reaching the backend).
     """
     if not dataset_root.is_dir():
         raise FileNotFoundError(dataset_root)
@@ -909,23 +1050,67 @@ def split_imagefolder(
     rng = random.Random(seed)
     # `assignments[class_name] = {"train": [...], "val": [...], "test": [...]}`
     assignments: dict[str, dict[str, list[Path]]] = {}
-    for class_name, paths in sorted(by_class.items()):
-        shuffled = list(paths)
-        rng.shuffle(shuffled)
-        n = len(shuffled)
-        n_train = int(round(n * train_ratio))
-        n_valid = int(round(n * valid_ratio))
-        # Per-class minimums: guarantee at least one in train if any image
-        # exists, so an unbalanced ratio (e.g. 0.95/0.05/0) on a small
-        # class doesn't leave train empty for that class.
-        n_train = max(1, min(n_train, n))
-        n_valid = min(n_valid, n - n_train)
-        n_test = n - n_train - n_valid
-        assignments[class_name] = {
-            "train": shuffled[:n_train],
-            "val": shuffled[n_train : n_train + n_valid],
-            "test": shuffled[n_train + n_valid : n_train + n_valid + n_test],
-        }
+    total_flat = 0
+    for class_name, items in sorted(by_class.items()):
+        if preserve_existing:
+            preserved: dict[str, list[Path]] = {
+                "train": [],
+                _CLASSIFY_VAL_OUTPUT: [],
+                "test": [],
+            }
+            flat: list[Path] = []
+            for path, current in items:
+                if current in preserved:
+                    preserved[current].append(path)
+                else:
+                    flat.append(path)
+            total_flat += len(flat)
+            rng.shuffle(flat)
+            n = len(flat)
+            n_train = int(round(n * train_ratio))
+            n_valid = int(round(n * valid_ratio))
+            # If there's at least one flat image in this class but the
+            # rounding wiped train, give train priority — preserves the
+            # "at least one in train" guarantee from the non-preserve
+            # path. When n == 0 (this class has nothing flat), the
+            # train minimum is moot.
+            if n > 0:
+                n_train = max(1, min(n_train, n))
+            n_valid = min(n_valid, n - n_train)
+            n_test = n - n_train - n_valid
+            assignments[class_name] = {
+                "train": preserved["train"] + flat[:n_train],
+                "val": (
+                    preserved[_CLASSIFY_VAL_OUTPUT]
+                    + flat[n_train : n_train + n_valid]
+                ),
+                "test": (
+                    preserved["test"]
+                    + flat[n_train + n_valid : n_train + n_valid + n_test]
+                ),
+            }
+        else:
+            shuffled = [path for path, _current in items]
+            rng.shuffle(shuffled)
+            n = len(shuffled)
+            n_train = int(round(n * train_ratio))
+            n_valid = int(round(n * valid_ratio))
+            # Per-class minimums: guarantee at least one in train if any image
+            # exists, so an unbalanced ratio (e.g. 0.95/0.05/0) on a small
+            # class doesn't leave train empty for that class.
+            n_train = max(1, min(n_train, n))
+            n_valid = min(n_valid, n - n_train)
+            n_test = n - n_train - n_valid
+            assignments[class_name] = {
+                "train": shuffled[:n_train],
+                "val": shuffled[n_train : n_train + n_valid],
+                "test": shuffled[n_train + n_valid : n_train + n_valid + n_test],
+            }
+    if preserve_existing and total_flat == 0:
+        raise ValueError(
+            "preserve_existing=True but every image is already in a split — "
+            "nothing to redistribute. Uncheck Preserve to reshuffle from scratch."
+        )
 
     staging = dataset_root / _STAGING_DIR_NAME
     if staging.exists():
@@ -965,7 +1150,9 @@ def split_imagefolder(
     return inspect_dataset(dataset_root)
 
 
-def _collect_imagefolder_images(root: Path) -> dict[str, list[Path]]:
+def _collect_imagefolder_images(
+    root: Path,
+) -> dict[str, list[tuple[Path, str | None]]]:
     """Walk every plausible class-dir location and group image paths by class.
 
     Looks in (in order):
@@ -975,22 +1162,27 @@ def _collect_imagefolder_images(root: Path) -> dict[str, list[Path]]:
     3. ``<root>/val/<class>/*.jpg`` (and ``valid``, ``validation``)
     4. ``<root>/test/<class>/*.jpg``
 
-    Images from all sources are merged per-class — the splitter doesn't
-    care if a dataset was previously split unevenly; it re-shuffles from
-    scratch using the seed.
+    Each image is tagged with its CURRENT split name in the output
+    convention this splitter writes (`"train"`, `"val"`, `"test"`, or
+    `None` for flat). `valid`/`validation` inputs collapse to `"val"`
+    because that's the name Ultralytics' classify loader expects.
+    Callers that reshuffle from scratch can ignore the tag; callers that
+    preserve existing splits use it to keep curated assignments.
     """
-    by_class: dict[str, list[Path]] = {}
+    by_class: dict[str, list[tuple[Path, str | None]]] = {}
     reserved = {"train", "val", "valid", "validation", "test"}
 
-    def _add_images(class_dir: Path) -> None:
+    def _add_images(class_dir: Path, current_split: str | None) -> None:
         files = [
             p for p in class_dir.iterdir()
             if p.is_file() and p.suffix.lower() in _IMAGE_EXT
         ]
         if files:
-            by_class.setdefault(class_dir.name, []).extend(files)
+            by_class.setdefault(class_dir.name, []).extend(
+                (f, current_split) for f in files
+            )
 
-    # Flat layout
+    # Flat layout — current_split=None
     for entry in root.iterdir():
         if (
             entry.is_dir()
@@ -998,16 +1190,20 @@ def _collect_imagefolder_images(root: Path) -> dict[str, list[Path]]:
             and entry.name != _STAGING_DIR_NAME
             and entry.name.lower() not in reserved
         ):
-            _add_images(entry)
+            _add_images(entry, None)
 
-    # Split layout
+    # Split layout — normalise valid/validation → val on the way in.
     for split_name in ("train", "val", "valid", "validation", "test"):
         split_dir = root / split_name
         if not split_dir.is_dir():
             continue
+        if split_name in _VAL_DIR_CANDIDATES:
+            current_split: str = _CLASSIFY_VAL_OUTPUT
+        else:
+            current_split = split_name
         for class_dir in split_dir.iterdir():
             if class_dir.is_dir() and not class_dir.name.startswith("."):
-                _add_images(class_dir)
+                _add_images(class_dir, current_split)
 
     return by_class
 

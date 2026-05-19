@@ -41,13 +41,34 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.8.6",
+    phase: "P5.fix-6",
+    title: "Preserve existing splits — splitter no longer always reshuffles",
+    tag: "v0.8.6",
+    commit: "TBD",
+    date: "2026-05-19",
+    status: "current",
+    features: [
+      "**Prepare splits now has a Preserve existing assignments checkbox.** Until v0.8.5, clicking Prepare splits on a dataset that already had `train/` + `val/` (or `valid/`) hand-curated by the user would gather every image from anywhere under the dataset root, reshuffle them by seed, and redistribute — destroying hand-curated splits. Users with a Roboflow export who just wanted to *add* a test split couldn't do it without losing the curated train/valid distribution. v0.8.6 fixes this: when the checkbox is on (default ON when the dataset already has at least one recognised split, OFF for a flat layout), images already in `train/` / `val|valid|validation/` / `test/` stay in those splits, and the ratios apply only to flat / unassigned images. Classify stratification still applies per-class to the flat pool. Detect carries each preserved image's label along (or its missing-label state).",
+      "**Modal shows the impact before you click Split.** When Preserve is on AND there are preserved images in a split, the slider labels read `Train (10 preserved + 4 new = 14 images)` instead of just `Train (14 images)`. Test row uses the same format. When Preserve is on but every image is already in a split, the Split button greys out with the message *Every image is already in a split — nothing to redistribute. Uncheck Preserve to reshuffle from scratch.* — that's a UI-side guard so the case is caught before the backend round-trip; backend also enforces it with a clean 400 for direct API callers.",
+    ],
+    fixes: [
+      "Inspector now reports `unassigned_image_count` on `DatasetInfoOut` so the frontend can tell whether a mixed layout (split + flat at root) has anything for Preserve to redistribute. Without this, the modal's flat-count derivation off `dataset.splits` would silently miss flat images that the inspector hides behind a split-layout report — disabling the Split button when it shouldn't be. Implementation: `_imagefolder_split_layout` scans non-reserved sibling dirs for image counts; `_inspect_roboflow_yolo` scans `<root>/images/`. Old API responses that omit the field default to 0 on the frontend (graceful degradation).",
+      "Backend splitter internals (`_find_image_label_pairs`, `_collect_imagefolder_images`) now tag each image with its current split (`\"train\"` / `\"valid\"|\"val\"` / `\"test\"` / `None` for flat), normalised to the splitter's output convention so a `valid/` input survives the round-trip as `valid/` for detect and `val/` for classify. Both splitters share `_existing_split_for` for path-component recognition.",
+    ],
+    knownLimitations: [
+      "Splits view on `/train/dataset` still doesn't surface the unassigned image count outside the Prepare-splits modal — a user with a mixed layout sees `train: 10 · val: 4` on the page and might not realise 6 flat images exist. Not blocking pilot; surfacing this is a small follow-up if pilot users get confused. The modal itself shows the count correctly when opened.",
+      "Preserve doesn't currently let a user CARVE a test split out of existing train (i.e. \"I have train+val with no test, give me a test from train\"). That's a different operation semantically — the splitter is fundamentally a \"distribute a pool of images\" op. Out of scope here.",
+    ],
+  },
+  {
     version: "0.8.5",
     phase: "P5.fix-5",
     title: "Graceful job cancel on Cmd+Q (training subprocess no longer orphaned)",
     tag: "v0.8.5",
     commit: "9159d0e",
     date: "2026-05-18",
-    status: "current",
+    status: "shipped",
     features: [],
     fixes: [
       "**Cmd+Q during a training run now actually stops the training.** v0.8.2 fixed the macOS Cmd+Q crash by intercepting `QEvent::Close` and calling `os._exit(0)` to bypass the QSurface / QThreadStorage static-destructor race. That works, but `os._exit` is abrupt — it doesn't unwind Python, which means the training subprocess (Ultralytics under `train_runner.py`) gets reparented to launchd and keeps running silently in the background. CPU / RAM / MPS stay pinned for the rest of the run, the eventual `best.pt` is invisible to the (now dead) JobManager, and the user thinks Cmd+Q cancelled their training when really it only hid the UI. The new `_cancel_active_jobs_best_effort(app, timeout_s=3.0)` walks every running / queued job through `JobManager.cancel()` (which already SIGTERMs the process group on POSIX), polls for clean exit, and only then proceeds to `_macos_hard_exit`. Wired into both the `QEvent::Close` filter (Cmd+Q path) and the `aboutToQuit` fallback (e.g. SIGTERM from a signal handler).",
