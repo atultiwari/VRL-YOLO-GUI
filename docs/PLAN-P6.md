@@ -187,7 +187,17 @@ Tag: `v0.9-p6-train-colab` (matches PLAN.md §14's planned tag).
 
 ---
 
-## 4. Open decisions (sign-off needed before P6a starts)
+## 4. Open decisions
+
+**All six signed off 2026-05-19.** Recommended option chosen for each.
+
+Decisions in order: §4.1 Option A (Drive upload to `MyDrive/VRL-YOLO-GUI/datasets/<name>/`), §4.2 GET /status pre-flight with 3 s timeout, §4.3 Option A (runtime in repo, notebook clones on first cell), §4.4 Option A (GitHub-anchored Colab URL), §4.5 quick-tunnel for v1, §4.6 Option A (per-session random token).
+
+The original rationale below is kept for future sessions so the
+trade-offs aren't re-litigated.
+
+---
+
 
 ### 4.1 Where the user uploads the dataset to Drive
 
