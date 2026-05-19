@@ -41,13 +41,39 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.9.0",
+    phase: "P6",
+    title: "Train on Colab — resilience polish, reconnect-with-backoff, retry on best.pt fetch, pilot test plan",
+    tag: "v0.9-p6-train-colab",
+    commit: "PENDING",
+    date: "2026-05-20",
+    status: "current",
+    features: [
+      "**Reconnect-with-backoff on tunnel drops.** `engine/colab_reader.py` now wraps the WebSocket read loop in an outer retry loop. Each attempt does a quick `GET /status?token=…` pre-flight (3 s timeout) so the reader can distinguish three failure modes instead of treating every drop the same: **auth** (HTTP 401 — notebook cell restarted with a new token, abandon immediately with a clear message), **network** (any other HTTP error / URLError — sleep + retry with exponential backoff: 2/4/8/16/32/60 s, capped at 20 attempts ≈ 18 min total), **ok** (proceed to open the WS). Free Colab GCs the runtime every few minutes; this rides through those blips without manual reconnect.",
+      "**`connection` events surface reconnect state to the UI.** The reader emits synthetic `{type: 'connection', status: 'reconnecting' | 'reconnected' | 'abandoned', attempt, delay_s, message}` events into `job.events`, which the existing WS fan-out forwards to the browser. `/train/run` renders a `ColabConnectionBanner` with task-specific copy and palette (amber while reconnecting + spinner showing attempt count and back-off delay, green when reconnected — banner clears itself, red when abandoned). Frontend `TrainingEvent` union extended.",
+      "**Cancel mid-backoff is clean.** `TrainingJob` gains a `_reader_stop_event: threading.Event` for Colab jobs; `JobManager.cancel()` sets it (alongside the existing POST /cancel best-effort), and the reader checks it in every backoff sleep + read loop. Result: clicking Cancel on a job whose tunnel is already dead doesn't leave the reader spinning for 18 minutes — it exits in <1 s with `cancelled` status.",
+      "**Retry-on-failure for `fetch_best_pt`.** `engine/colab.py::fetch_best_pt` now tries up to 3 times with 2/4/8 s exponential backoff on transient network failures. Fail-fast on HTTP 401 (token changed — retry won't help) and 409 (training isn't complete — retry won't help until it is). Internal `_stream_best_pt_once` tags exceptions with a `retryable` attribute so the retry loop knows when to bail vs back off. Save-to-library now survives a Cloudflare blip mid-download instead of making the clinician re-click.",
+      "**`docs/PILOT-TEST.md`** — the 9-step end-to-end plan from PLAN-P6.md §7 expanded into an executable checklist with per-step pass criteria, expected outputs, and a troubleshooting table covering every error message the user might see (stale URL, token rejected, tunnel unreachable, payload mismatch). Includes the deliberate-disconnect step for verifying the reconnect banner end-to-end against a real Colab cell.",
+      "**Six new smoke tests cover the P6c contract** (`tests/test_colab_integration_smoke.py`): tunnel-drop emits a `reconnecting` connection event; cancel during backoff flips status to `cancelled` within seconds; `_preflight` returns `auth` for HTTP 401 + `network` for unreachable hosts (this is the direct contract test for the reconnect-loop's classification); `fetch_best_pt` retries on transient errors + fails fast on non-retryable HTTP codes. Full suite: 23/23 passing.",
+    ],
+    fixes: [
+      "Before P6c, a single transient WebSocket close (Cloudflare propagation hiccup, Colab runtime GC) would synthesise an `error` event and mark the job failed — even though training was still running on the Colab side. Now the reader announces a reconnect attempt and recovers transparently when the tunnel comes back.",
+      "Before P6c, cancelling a Colab job whose tunnel was already dead would POST /cancel to nowhere (no-op) and leave the reader thread alive. The desktop UI showed the job as still running until the WS naturally timed out. Now `cancel()` signals the stop event so the reader exits within the current backoff window.",
+    ],
+    knownLimitations: [
+      "No automatic re-paste-URL UI on the run page. When the reader abandons due to a token change, the user has to navigate back to /train/configure, click Run on Colab again, and paste the new URL. A dedicated Reconnect modal on /train/run that takes a new URL is post-pilot polish.",
+      "best.pt download doesn't use HTTP Range — retry restarts from byte 0. For 5-80 MB checkpoints on Cloudflare quick-tunnels this is acceptable; revisit if pilot users report large checkpoints failing repeatedly.",
+      "The pilot test plan in docs/PILOT-TEST.md hasn't been executed yet — that's a clinician + dataset task, not a Claude task. Pilot verification is the gate on declaring v1.0.",
+    ],
+  },
+  {
     version: "0.8.9",
     phase: "P6b",
     title: "Train on Colab — desktop Run on Colab callout + Connect modal + Colab-backed jobs",
     tag: "v0.8.9-p6b-colab-desktop",
     commit: "6ca2f73",
     date: "2026-05-20",
-    status: "current",
+    status: "shipped",
     features: [
       "**Run on Colab callout on /train/configure** — when the accelerator probe returns `cpu`, a yellow card now sits between the hyperparameter section and the Start training button: *\"This machine has no GPU — local training will be slow. Train on a free Google Colab GPU instead.\"* with a Run on Colab button. Clinicians on CPU-only Macs / Windows boxes no longer stumble into accidental overnight CPU runs.",
       "**Connect to Colab modal** — task-aware (detect vs classify), shows the GitHub-anchored Colab notebook URL with Copy + Open buttons (Open opens the URL in the system browser via window.open, which Pyloid routes through QWebEngine's external-URL handler), takes the `trycloudflare.com?token=…` URL from the cell, and calls the backend's pre-flight to validate. Errors surface in-modal in plain English (stale URL, wrong token, unreachable host, wrong payload shape) instead of as raw HTTP failures.",

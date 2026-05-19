@@ -40,6 +40,12 @@ logger = logging.getLogger(__name__)
 
 PREFLIGHT_TIMEOUT_S = 3.0
 FETCH_TIMEOUT_S = 30.0
+# Best.pt is 5-80 MB on a 50 Mbps tunnel — should complete in seconds.
+# Free Colab can blip every few minutes; 3 retries with 2/4/8 s back-off
+# rides through transient failures without making the user re-click Save.
+FETCH_MAX_ATTEMPTS = 3
+FETCH_BACKOFF_INITIAL_S = 2.0
+FETCH_BACKOFF_FACTOR = 2.0
 
 
 @dataclass(frozen=True)
@@ -213,36 +219,102 @@ def request_cancel(session: ColabSession, *, timeout_s: float = PREFLIGHT_TIMEOU
         logger.warning("colab cancel request failed; runner may already be down")
 
 
-def fetch_best_pt(session: ColabSession, dest: Path, *, timeout_s: float = FETCH_TIMEOUT_S) -> Path:
+def fetch_best_pt(
+    session: ColabSession,
+    dest: Path,
+    *,
+    timeout_s: float = FETCH_TIMEOUT_S,
+    max_attempts: int = FETCH_MAX_ATTEMPTS,
+) -> Path:
     """Stream ``GET /best.pt`` into ``dest``, returning the written path.
 
     Uses ``shutil.copyfileobj`` to avoid pulling the whole .pt into
     memory; typical detect checkpoints are 5–80 MB, classify ones
-    smaller. Raises ``ColabConnectError`` with a readable message on
-    HTTP errors so the desktop can surface them in-modal.
+    smaller. Retries up to ``max_attempts`` times with exponential
+    backoff (2/4/8 s) on transient network failures so a single
+    tunnel blip doesn't make the user re-click Save.
+
+    Fail-fast (no retry) on:
+      - HTTP 401 (token changed — re-paste needed, retry won't help)
+      - HTTP 409 (training not complete — retry won't help until it is)
+
+    Raises ``ColabConnectError`` with a clinician-readable message
+    after exhausting retries.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            _stream_best_pt_once(session, dest, timeout_s=timeout_s)
+            return dest
+        except ColabConnectError as exc:
+            # 401 and 409 are surfaced as-is by _stream_best_pt_once with
+            # `retryable=False`; everything else (network drops, 5xx) is
+            # marked retryable.
+            if not getattr(exc, "retryable", False):
+                raise
+            last_exc = exc
+            if attempt >= max_attempts:
+                break
+            delay_s = FETCH_BACKOFF_INITIAL_S * (FETCH_BACKOFF_FACTOR ** (attempt - 1))
+            logger.info(
+                "best.pt fetch attempt %d/%d failed (%s); retrying in %.0fs",
+                attempt, max_attempts, exc, delay_s,
+            )
+            import time
+
+            time.sleep(delay_s)
+
+    assert last_exc is not None  # noqa: S101 - reachable only via the break path
+    raise last_exc
+
+
+def _stream_best_pt_once(
+    session: ColabSession, dest: Path, *, timeout_s: float
+) -> None:
+    """One attempt at downloading best.pt — raises taxonomic errors.
+
+    Network-level failures get ``retryable=True`` so ``fetch_best_pt``
+    knows to back off and retry. Auth + state errors get
+    ``retryable=False`` because retrying won't change the outcome.
+    """
     req = urllib.request.Request(session.best_pt_url())
     try:
         with urllib.request.urlopen(req, timeout=timeout_s) as resp, dest.open("wb") as out:
             shutil.copyfileobj(resp, out)
     except urllib.error.HTTPError as exc:
         if exc.code == 409:
-            raise ColabConnectError(
+            err = ColabConnectError(
                 "Trained model isn't ready yet — wait for the Colab cell "
                 "to print 'Training finished' before saving to library."
-            ) from exc
+            )
+            err.retryable = False  # type: ignore[attr-defined]
+            raise err from exc
         if exc.code == 401:
-            raise ColabConnectError(
+            err = ColabConnectError(
                 "Tunnel rejected the token while fetching best.pt — "
-                "did the Colab cell restart?"
-            ) from exc
-        raise ColabConnectError(
+                "did the Colab cell restart? Re-paste the new URL."
+            )
+            err.retryable = False  # type: ignore[attr-defined]
+            raise err from exc
+        # 5xx / other HTTP errors are retryable — could be a transient
+        # tunnel hiccup or Cloudflare propagation.
+        err = ColabConnectError(
             f"Tunnel returned HTTP {exc.code} on /best.pt. {exc.reason}."
-        ) from exc
+        )
+        err.retryable = True  # type: ignore[attr-defined]
+        raise err from exc
     except urllib.error.URLError as exc:
-        raise ColabConnectError(
+        err = ColabConnectError(
             "Couldn't reach the Colab session to download best.pt. "
             "Keep the notebook cell running and try again."
-        ) from exc
-    return dest
+        )
+        err.retryable = True  # type: ignore[attr-defined]
+        raise err from exc
+    except OSError as exc:
+        # Disk full, permission denied while writing — not retryable.
+        err = ColabConnectError(
+            f"Couldn't write best.pt to disk: {exc}."
+        )
+        err.retryable = False  # type: ignore[attr-defined]
+        raise err from exc

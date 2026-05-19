@@ -248,3 +248,242 @@ def test_save_to_library_downloads_best_pt(fake_tunnel, tmp_path: Path) -> None:
     files = list(dest.glob("trained-*.pt")) if dest.is_dir() else []
     assert files, "best.pt was not copied into models/detect/"
     assert files[0].read_bytes() == b"\x00" * 4096
+
+
+# ---------------------------------------------------------------------------
+# P6c: reconnect-with-backoff, cancel-during-backoff, auth abandonment,
+# fetch retry. Each test exercises one of the failure modes covered in
+# docs/PILOT-TEST.md.
+# ---------------------------------------------------------------------------
+
+
+def test_tunnel_drop_emits_reconnect_event(fake_tunnel, tmp_path: Path) -> None:
+    """When uvicorn stops mid-run, the reader should announce reconnect.
+
+    We don't need to test that reconnection *succeeds* — just that the
+    backoff loop fires + emits a `connection` event so the desktop UI
+    can show its banner.
+    """
+    from vrl_yolo.engine.training import JobManager
+
+    server, tunnel_url = fake_tunnel
+    manager = JobManager(storage_root=tmp_path)
+    job = manager.start_colab_job(tunnel_url)
+
+    # Wait for the reader to actually open the WS, then drop the tunnel.
+    time.sleep(0.5)
+    server.stop_uvicorn()
+
+    # Backoff starts at 2 s; allow up to 5 s for the first reconnect
+    # event to land after the WS read loop notices the close.
+    deadline = time.time() + 6
+    connection_events: list[dict] = []
+    while time.time() < deadline:
+        connection_events = [
+            e for e in job.events if e.get("type") == "connection"
+        ]
+        if any(e.get("status") == "reconnecting" for e in connection_events):
+            break
+        time.sleep(0.2)
+
+    statuses = [e.get("status") for e in connection_events]
+    assert "reconnecting" in statuses, (
+        f"expected a reconnecting event, got {statuses!r}"
+    )
+    # Stop the reader so it doesn't keep retrying for the rest of the
+    # test session.
+    assert job._reader_stop_event is not None
+    job._reader_stop_event.set()
+
+
+def test_cancel_during_backoff_flips_to_cancelled(fake_tunnel, tmp_path: Path) -> None:
+    """A cancel mid-backoff should exit cleanly + mark the job cancelled."""
+    from vrl_yolo.engine.training import JobManager
+
+    server, tunnel_url = fake_tunnel
+    manager = JobManager(storage_root=tmp_path)
+    job = manager.start_colab_job(tunnel_url)
+
+    time.sleep(0.5)
+    server.stop_uvicorn()  # force the reader into backoff
+
+    # Wait until the reader has at least started its first backoff sleep.
+    deadline = time.time() + 6
+    while time.time() < deadline:
+        if any(
+            e.get("type") == "connection" and e.get("status") == "reconnecting"
+            for e in job.events
+        ):
+            break
+        time.sleep(0.2)
+
+    manager.cancel(job.job_id)
+
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        if job.status == "cancelled":
+            break
+        time.sleep(0.1)
+
+    assert job.status == "cancelled"
+
+
+def test_preflight_classifies_401_as_auth(fake_tunnel) -> None:
+    """The reader's pre-flight must return ``auth`` for HTTP 401.
+
+    This is the contract the reconnect loop relies on to abandon retry
+    when the notebook cell is restarted with a new token — auth
+    failures don't get better with backoff. We verify it directly
+    against a live ColabServer using a deliberately-wrong token.
+    """
+    from vrl_yolo.engine.colab import ColabSession, ColabStatus
+    from vrl_yolo.engine.colab_reader import _preflight
+
+    _, tunnel_url = fake_tunnel
+    base = tunnel_url.split("?", 1)[0]
+
+    wrong_token_session = ColabSession(
+        base_url=base,
+        token="not-the-real-token",
+        initial_status=ColabStatus(
+            task="detect",
+            model="x",
+            status="running",
+            epoch=0,
+            epochs_total=1,
+            imgsz=640,
+            batch=8,
+            best_pt_available=False,
+            error_message=None,
+        ),
+    )
+
+    assert _preflight(wrong_token_session) == "auth"
+
+
+def test_preflight_classifies_unreachable_as_network() -> None:
+    """And network errors (connection refused) must classify as ``network``.
+
+    Same contract from the other angle — the reader needs to retry on
+    these. Uses port 1 (no listener) for a fast URLError.
+    """
+    from vrl_yolo.engine.colab import ColabSession, ColabStatus
+    from vrl_yolo.engine.colab_reader import _preflight
+
+    dead_session = ColabSession(
+        base_url="http://127.0.0.1:1",
+        token="anything",
+        initial_status=ColabStatus(
+            task="detect",
+            model="x",
+            status="running",
+            epoch=0,
+            epochs_total=1,
+            imgsz=640,
+            batch=8,
+            best_pt_available=False,
+            error_message=None,
+        ),
+    )
+
+    assert _preflight(dead_session) == "network"
+
+
+# ---------------------------------------------------------------------------
+# fetch_best_pt retry semantics — unit-style, no live server needed.
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_best_pt_retries_on_transient_error(monkeypatch, tmp_path: Path) -> None:
+    """Two failed attempts then a success should yield a downloaded file.
+
+    We monkeypatch ``_stream_best_pt_once`` rather than the lower-level
+    urllib so the retry-loop wiring (sleep, attempt counter, success
+    return) is the only thing under test.
+    """
+    from vrl_yolo.engine import colab as colab_module
+    from vrl_yolo.engine.colab import (
+        ColabConnectError,
+        ColabSession,
+        ColabStatus,
+        fetch_best_pt,
+    )
+
+    monkeypatch.setattr(colab_module, "FETCH_BACKOFF_INITIAL_S", 0.01)
+    monkeypatch.setattr(colab_module, "FETCH_BACKOFF_FACTOR", 1.0)
+
+    session = ColabSession(
+        base_url="http://127.0.0.1:1",
+        token="t",
+        initial_status=ColabStatus(
+            task="detect",
+            model="x",
+            status="running",
+            epoch=0,
+            epochs_total=1,
+            imgsz=640,
+            batch=8,
+            best_pt_available=False,
+            error_message=None,
+        ),
+    )
+
+    attempts = {"n": 0}
+
+    def fake_stream(_session, dest: Path, *, timeout_s: float) -> None:
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            err = ColabConnectError("simulated transient failure")
+            err.retryable = True  # type: ignore[attr-defined]
+            raise err
+        dest.write_bytes(b"OK")
+
+    monkeypatch.setattr(colab_module, "_stream_best_pt_once", fake_stream)
+
+    dest = tmp_path / "best.pt"
+    result = fetch_best_pt(session, dest)
+
+    assert result == dest
+    assert dest.read_bytes() == b"OK"
+    assert attempts["n"] == 3
+
+
+def test_fetch_best_pt_fails_fast_on_non_retryable(monkeypatch, tmp_path: Path) -> None:
+    """409 / 401 / disk errors should NOT be retried."""
+    from vrl_yolo.engine import colab as colab_module
+    from vrl_yolo.engine.colab import (
+        ColabConnectError,
+        ColabSession,
+        ColabStatus,
+        fetch_best_pt,
+    )
+
+    session = ColabSession(
+        base_url="http://127.0.0.1:1",
+        token="t",
+        initial_status=ColabStatus(
+            task="detect",
+            model="x",
+            status="done",
+            epoch=1,
+            epochs_total=1,
+            imgsz=640,
+            batch=8,
+            best_pt_available=True,
+            error_message=None,
+        ),
+    )
+
+    attempts = {"n": 0}
+
+    def fake_stream(_session, _dest, *, timeout_s: float) -> None:
+        attempts["n"] += 1
+        err = ColabConnectError("trained model isn't ready yet")
+        err.retryable = False  # type: ignore[attr-defined]
+        raise err
+
+    monkeypatch.setattr(colab_module, "_stream_best_pt_once", fake_stream)
+
+    with pytest.raises(ColabConnectError, match="isn't ready"):
+        fetch_best_pt(session, tmp_path / "best.pt")
+    assert attempts["n"] == 1  # no retry

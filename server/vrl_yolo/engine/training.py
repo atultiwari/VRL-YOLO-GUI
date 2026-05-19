@@ -123,6 +123,9 @@ class TrainingJob:
     # local jobs have a subprocess + None session; Colab jobs have a
     # session + None subprocess.
     _colab_session: ColabSession | None = None
+    # Set by the cancel path on Colab jobs so the reader thread breaks
+    # out of any backoff sleep or read loop cleanly. None for local jobs.
+    _reader_stop_event: threading.Event | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     @property
@@ -415,6 +418,7 @@ class JobManager:
             epoch_current=init.epoch,
         )
         job._colab_session = session
+        job._reader_stop_event = threading.Event()
 
         if init.error_message and init.status == "error":
             job.error_message = init.error_message
@@ -422,8 +426,10 @@ class JobManager:
         with self._jobs_lock:
             self._jobs[job_id] = job
 
-        # Reader thread streams /events?token=... → job.append_event.
-        spawn_colab_reader(job, session)
+        # Reader thread streams /events?token=... → job.append_event,
+        # auto-reconnecting on transient drops; honours stop_event for
+        # clean cancellation.
+        spawn_colab_reader(job, session, stop_event=job._reader_stop_event)
 
         return job
 
@@ -445,6 +451,15 @@ class JobManager:
             session = job._colab_session
 
         if session is not None:
+            # Two parallel paths: tell the remote runner to stop (so it
+            # emits a clean `cancelled` event over WS), AND signal the
+            # local reader thread so it breaks out of any backoff sleep
+            # if the tunnel is already down. Either path on its own is
+            # insufficient: the remote could be unreachable, or the
+            # reader could be mid-read of a stale message stream.
+            stop_event = job._reader_stop_event
+            if stop_event is not None:
+                stop_event.set()
             colab_request_cancel(session)
             return True
 

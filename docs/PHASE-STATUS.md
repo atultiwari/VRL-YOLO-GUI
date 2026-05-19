@@ -1,7 +1,7 @@
 # Phase Status
 
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones).
-> Updated at the end of each phase boundary. **Last edit: 2026-05-20 (P6b — desktop Run on Colab callout + Connect modal + Colab-backed jobs).**
+> Updated at the end of each phase boundary. **Last edit: 2026-05-20 (P6 complete — Train on Colab is functionally done; pilot test plan in `docs/PILOT-TEST.md` is the v1.0 gate).**
 >
 > **Known limitations and deferred work** live in
 > [`docs/CARRY-FORWARDS.md`](CARRY-FORWARDS.md) — full diagnoses + fix
@@ -34,13 +34,13 @@
 | P5.fix-7 — Bundle our own dist-info (version badge fix) | ✅ done | `v0.8.7` | `400ba79` |
 | **P6a — Colab companion notebooks + runtime** | ✅ done | `v0.8.8-p6a-colab-notebook` | `8e3f08d` |
 | **P6b — Desktop *Run on Colab* integration** | ✅ done | `v0.8.9-p6b-colab-desktop` | `6ca2f73` |
-| P6c — Polish + end-to-end pilot test | ⏳ next | — | — |
-| P7 — Polish | ⏳ pending | — | — |
+| **P6c — Polish: reconnect-with-backoff + fetch retry + pilot plan** | ✅ done | `v0.9-p6-train-colab` | PENDING |
+| P7 — Polish | ⏳ next | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at the P6b commit (`v0.8.9-p6b-colab-desktop`). **Next sub-phase:** P6c — polish + error states + the 9-step end-to-end pilot test against a real Colab session and a clinical dataset. Adds reconnect-with-backoff on WebSocket drops, best.pt download resumability, and Colab-session-timeout detection on the desktop side. Spec: [`docs/PLAN-P6.md`](PLAN-P6.md) §3, pilot plan in §7. Target tag `v0.9-p6-train-colab`.
+**Current head:** `main` at the P6 phase-completion commit (`v0.9-p6-train-colab`). **P6 complete:** Train on Colab is functionally done in code — companion notebooks (P6a), desktop integration (P6b), and resilience polish (P6c: reconnect-with-backoff, fetch retry, cancel-during-backoff, pilot test plan). Verified via 23/23 passing smoke tests. The real-world pilot test (`docs/PILOT-TEST.md`) hasn't been run yet — that's a clinician + dataset task, not a Claude task, and the gate for v1.0. **Next phase:** P7 — Polish (per PLAN.md §14).
 
 ---
 

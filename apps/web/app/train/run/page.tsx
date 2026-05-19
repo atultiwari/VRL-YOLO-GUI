@@ -6,6 +6,7 @@ import {
   Check,
   CheckCircle2,
   CircleStop,
+  Cloud,
   ExternalLink,
   Eye,
   LineChart as LineChartIcon,
@@ -109,6 +110,15 @@ export default function TrainRunPage() {
   const [connectionState, setConnectionState] = useState<
     "connecting" | "open" | "closed"
   >("connecting");
+  // Colab-only: the desktop-synthesised `connection` events surface
+  // reconnect-with-backoff state between the desktop and the tunnel.
+  // null when no banner needed.
+  const [colabConnection, setColabConnection] = useState<{
+    status: "reconnecting" | "reconnected" | "abandoned";
+    attempt: number;
+    delay_s?: number;
+    message: string;
+  } | null>(null);
 
   // Seed from /api/training/{id} so the chart renders before the WS opens.
   useEffect(() => {
@@ -213,6 +223,24 @@ export default function TrainRunPage() {
         case "closed":
           setStatus(event.status);
           break;
+        case "connection": {
+          // Banner clears itself when reconnect succeeds; stays on
+          // "abandoned" until the follow-up `error` event flips the
+          // job to failed (and the banner becomes redundant beside the
+          // terminal-error card).
+          if (event.status === "reconnected") {
+            setColabConnection(null);
+          } else {
+            setColabConnection({
+              status: event.status,
+              attempt: event.attempt,
+              delay_s: event.delay_s,
+              message: event.message,
+            });
+          }
+          pushLog(`colab · ${event.status} · ${event.message}`);
+          break;
+        }
       }
     },
     [pushLog],
@@ -378,6 +406,10 @@ export default function TrainRunPage() {
         </div>
       </header>
 
+      {colabConnection ? (
+        <ColabConnectionBanner state={colabConnection} />
+      ) : null}
+
       <ProgressCard
         status={status}
         epochCurrent={epochCurrent}
@@ -450,6 +482,70 @@ export default function TrainRunPage() {
 // --------------------------------------------------------------------------
 // Sub-components
 // --------------------------------------------------------------------------
+
+function ColabConnectionBanner({
+  state,
+}: {
+  state: {
+    status: "reconnecting" | "reconnected" | "abandoned";
+    attempt: number;
+    delay_s?: number;
+    message: string;
+  };
+}) {
+  // Three palettes: reconnecting (amber, retrying), reconnected
+  // (clinical green, transient — caller normally clears the banner
+  // when this lands), abandoned (red, terminal — also accompanied by
+  // a separate `error` event that fails the job).
+  const palette = {
+    reconnecting: {
+      wrap: "border-amber-200 bg-amber-50 text-amber-900",
+      icon: "text-amber-700",
+      Icon: Loader2,
+      spin: true,
+    },
+    reconnected: {
+      wrap: "border-emerald-200 bg-emerald-50 text-emerald-900",
+      icon: "text-emerald-700",
+      Icon: CheckCircle2,
+      spin: false,
+    },
+    abandoned: {
+      wrap: "border-red-200 bg-red-50 text-red-900",
+      icon: "text-red-700",
+      Icon: AlertTriangle,
+      spin: false,
+    },
+  }[state.status];
+
+  return (
+    <div
+      className={cn(
+        "flex items-start gap-3 rounded-md border px-4 py-3 text-sm",
+        palette.wrap,
+      )}
+    >
+      <Cloud className={cn("mt-0.5 size-4 shrink-0", palette.icon)} />
+      <div className="flex-1">
+        <p className="flex items-center gap-2 font-medium">
+          <palette.Icon
+            className={cn(
+              "size-3.5",
+              palette.icon,
+              palette.spin ? "animate-spin" : "",
+            )}
+          />
+          {state.status === "reconnecting"
+            ? `Reconnecting to Colab — attempt ${state.attempt}`
+            : state.status === "reconnected"
+              ? "Reconnected to Colab"
+              : "Lost connection to Colab"}
+        </p>
+        <p className="mt-0.5 text-xs opacity-80">{state.message}</p>
+      </div>
+    </div>
+  );
+}
 
 function ProgressCard({
   status,

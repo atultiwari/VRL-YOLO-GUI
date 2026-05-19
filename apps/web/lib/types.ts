@@ -240,4 +240,17 @@ export type TrainingEvent =
   | { type: "error"; ts: number; message: string; traceback?: string }
   | { type: "cancelled"; ts: number; message?: string }
   | { type: "log"; ts: number; line: string }
-  | { type: "closed"; status: TrainingStatus };
+  | { type: "closed"; status: TrainingStatus }
+  // Desktop-synthesised event surfacing reconnect state for Colab jobs.
+  // status: "reconnecting" while a backoff sleep is in progress;
+  //         "reconnected" once the tunnel is back; "abandoned" once retries
+  //         are exhausted (followed by an `error` event that flips the job
+  //         to failed). Local jobs never emit these.
+  | {
+      type: "connection";
+      ts: number;
+      status: "reconnecting" | "reconnected" | "abandoned";
+      attempt: number;
+      delay_s?: number;
+      message: string;
+    };
