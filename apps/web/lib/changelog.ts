@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P5.fix-7",
     title: "Bundle our own dist-info — version badge no longer reports `0.0.0+source`",
     tag: "v0.8.7",
-    commit: "TBD",
+    commit: "400ba79",
     date: "2026-05-19",
     status: "current",
     features: [],
