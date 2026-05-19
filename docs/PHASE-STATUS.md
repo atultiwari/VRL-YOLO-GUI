@@ -1,7 +1,7 @@
 # Phase Status
 
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones).
-> Updated at the end of each phase boundary. **Last edit: 2026-05-19 (P5.fix-6 — preserve existing splits in the splitter).**
+> Updated at the end of each phase boundary. **Last edit: 2026-05-19 (P5.fix-7 — bundle our own dist-info so the version badge reports correctly).**
 >
 > **Known limitations and deferred work** live in
 > [`docs/CARRY-FORWARDS.md`](CARRY-FORWARDS.md) — full diagnoses + fix
@@ -31,6 +31,7 @@
 | P5.fix-4 — Subprocess env-var dispatch (frozen `-m` bug) | ✅ done | `v0.8.4` | `a86da1b` |
 | P5.fix-5 — Graceful job cancel on Cmd+Q | ✅ done | `v0.8.5` | `9159d0e` |
 | P5.fix-6 — Preserve existing splits in the splitter | ✅ done | `v0.8.6` | `c5ae06e` |
+| P5.fix-7 — Bundle our own dist-info (version badge fix) | ✅ done | `v0.8.7` | `TBD` |
 | P6 — Train on Colab | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
@@ -569,6 +570,20 @@ In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runne
 **Carried-forward:**
 - The splits view on `/train/dataset` still doesn't surface the unassigned image count outside the Prepare-splits modal. A user with a mixed layout sees `train: 10 · val: 4` on the page and might not realise 6 flat images exist. Not blocking pilot; small follow-up if pilot feedback flags it.
 - Preserve doesn't carve a test split out of an existing train+val pair (a different semantic operation entirely; out of scope here).
+
+### ✅ P5.fix-7 — Bundle our own dist-info (version badge fix) · `v0.8.7` · `TBD`
+
+**Trigger:** the top-right version badge in the bundled `.app` displayed `v0.0.0+source` instead of the real shipped version (`v0.8.6` at the time of the report). User caught it while clicking through the dataset wizard on the freshly-installed v0.8.6 build at 2026-05-19 ~22:20 IST.
+
+**Root cause:** `_resolve_version()` in `server/vrl_yolo/__init__.py` reads the live version via `importlib.metadata.version("vrl-yolo-gui")` and falls back to `"0.0.0+source"` on `PackageNotFoundError`. In a PyInstaller-bundled `.app`, our package's source is bundled (via `--collect-submodules vrl_yolo`) but **the `dist-info` metadata isn't** — PyInstaller's submodule collection doesn't carry it. So at runtime, `importlib.metadata.version` raised `PackageNotFoundError` and the badge fell back to the placeholder. Confirmed on the user's installed v0.8.6 build by checking `Contents/Frameworks/` — every third-party dep had a `*.dist-info` directory; ours didn't. `Info.plist`'s `CFBundleShortVersionString` was always correct (PyInstaller writes it from the build-time read of `pyproject.toml`); the gap was only at the FastAPI / topbar runtime read.
+
+**Fix:** add `--copy-metadata vrl-yolo-gui` to the PyInstaller invocation in `scripts/build-release.py`. The flag explicitly bundles the named distribution's metadata even when the package was installed via `--collect-submodules` rather than from a normal dist-info-shipping wheel. One-line build-script change. Dev mode (`uv run python src-pyloid/main.py`) was already correct because uv installs the package editably with full dist-info — only frozen builds were affected.
+
+| # | Subject | Outcome |
+|---|---|---|
+| P5.fix-7.1 | Add `--copy-metadata vrl-yolo-gui` to `pyinstaller_args()` | Inserted right after `--collect-submodules vrl_yolo` with an inline comment explaining the gap. No other build-script changes. |
+
+**Carried-forward:** none. The earlier v0.8.5 / v0.8.6 binaries on existing installs will still show the wrong badge — there's no in-app remediation, the user has to reinstall from v0.8.7 onward to see the fix.
 
 ---
 

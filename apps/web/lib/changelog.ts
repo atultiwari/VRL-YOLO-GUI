@@ -41,13 +41,30 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.8.7",
+    phase: "P5.fix-7",
+    title: "Bundle our own dist-info — version badge no longer reports `0.0.0+source`",
+    tag: "v0.8.7",
+    commit: "TBD",
+    date: "2026-05-19",
+    status: "current",
+    features: [],
+    fixes: [
+      "**Top-right version badge now reports the real shipped version** (e.g. `v0.8.7`) instead of the `v0.0.0+source` fallback that every PyInstaller-bundled release from v0.8.5 through v0.8.6 was showing. Cause: PyInstaller's `--collect-submodules vrl_yolo` bundles our package's source but not its `dist-info` metadata, so `importlib.metadata.version(\"vrl-yolo-gui\")` raised `PackageNotFoundError` at runtime and `_resolve_version()` returned the placeholder. `Info.plist`'s `CFBundleShortVersionString` was always correct (PyInstaller writes it from the `--name` + read-from-pyproject path); only the runtime-read API version was wrong. /api/health is the load-bearing read — the topbar pulls it once on first paint.",
+      "Fix: add `--copy-metadata vrl-yolo-gui` to the PyInstaller invocation in `scripts/build-release.py`. One-line build-script change; no Python source change. The bundle ships ~1 KB of extra metadata; runtime version-lookup now succeeds. Dev mode (`uv run python src-pyloid/main.py`) was already correct because uv installs the package editably with proper dist-info.",
+    ],
+    knownLimitations: [
+      "Doesn't backfill the badge on installs of v0.8.5 / v0.8.6 — those binaries are shipped as-is. Re-install from the v0.8.7 release to see the fix on your laptop.",
+    ],
+  },
+  {
     version: "0.8.6",
     phase: "P5.fix-6",
     title: "Preserve existing splits — splitter no longer always reshuffles",
     tag: "v0.8.6",
     commit: "c5ae06e",
     date: "2026-05-19",
-    status: "current",
+    status: "shipped",
     features: [
       "**Prepare splits now has a Preserve existing assignments checkbox.** Until v0.8.5, clicking Prepare splits on a dataset that already had `train/` + `val/` (or `valid/`) hand-curated by the user would gather every image from anywhere under the dataset root, reshuffle them by seed, and redistribute — destroying hand-curated splits. Users with a Roboflow export who just wanted to *add* a test split couldn't do it without losing the curated train/valid distribution. v0.8.6 fixes this: when the checkbox is on (default ON when the dataset already has at least one recognised split, OFF for a flat layout), images already in `train/` / `val|valid|validation/` / `test/` stay in those splits, and the ratios apply only to flat / unassigned images. Classify stratification still applies per-class to the flat pool. Detect carries each preserved image's label along (or its missing-label state).",
       "**Modal shows the impact before you click Split.** When Preserve is on AND there are preserved images in a split, the slider labels read `Train (10 preserved + 4 new = 14 images)` instead of just `Train (14 images)`. Test row uses the same format. When Preserve is on but every image is already in a split, the Split button greys out with the message *Every image is already in a split — nothing to redistribute. Uncheck Preserve to reshuffle from scratch.* — that's a UI-side guard so the case is caught before the backend round-trip; backend also enforces it with a clean 400 for direct API callers.",

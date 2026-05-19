@@ -291,6 +291,14 @@ def pyinstaller_args(*, onefile: bool, os_name: str) -> list[str]:
         # PyInstaller's static analyzer otherwise misses submodules; enumerate
         # them all so the bundle is exhaustive.
         "--collect-submodules", "vrl_yolo",
+        # Bundle our own package's dist-info so importlib.metadata.version()
+        # can read it at runtime. Without this, `_resolve_version()` in
+        # `server/vrl_yolo/__init__.py` catches PackageNotFoundError and
+        # falls back to "0.0.0+source" — which shows up as a broken version
+        # badge in the top-right of the UI even when Info.plist correctly
+        # reports the build version. `--collect-submodules` bundles source
+        # but not metadata; this is the missing half.
+        "--copy-metadata", "vrl-yolo-gui",
         "--paths", str(ROOT / "server"),
         # Force-collect everything from packages whose auto-detection is
         # known-flaky inside .app launches.

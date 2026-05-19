@@ -12,6 +12,19 @@ for the running tracker.
 
 ---
 
+## [0.8.7] — 2026-05-19 · P5.fix-7: Bundle our own dist-info — version badge no longer reports `0.0.0+source`
+
+**Tag:** `v0.8.7`
+
+### Fixed
+- **Top-right version badge now reports the real shipped version** (e.g. `v0.8.7`) instead of the `v0.0.0+source` fallback that every PyInstaller-bundled release from v0.8.5 through v0.8.6 was showing. Cause: PyInstaller's `--collect-submodules vrl_yolo` bundles our package's source but not its `dist-info` metadata, so `importlib.metadata.version("vrl-yolo-gui")` raised `PackageNotFoundError` at runtime and `_resolve_version()` returned the placeholder. `Info.plist`'s `CFBundleShortVersionString` was always correct (PyInstaller writes it from the `--name` + read-from-pyproject path); only the runtime-read API version was wrong. `/api/health` is the load-bearing read — the topbar pulls it once on first paint.
+- Fix: add `--copy-metadata vrl-yolo-gui` to the PyInstaller invocation in `scripts/build-release.py`. One-line build-script change; no Python source change. The bundle ships ~1 KB of extra metadata; runtime version-lookup now succeeds. Dev mode (`uv run python src-pyloid/main.py`) was already correct because uv installs the package editably with proper dist-info.
+
+### Known limitations (deferred)
+- Doesn't backfill the badge on installs of v0.8.5 / v0.8.6 — those binaries are shipped as-is. Re-install from the v0.8.7 release to see the fix on your laptop.
+
+---
+
 ## [0.8.6] — 2026-05-19 · P5.fix-6: Preserve existing splits — splitter no longer always reshuffles
 
 **Tag:** `v0.8.6`
