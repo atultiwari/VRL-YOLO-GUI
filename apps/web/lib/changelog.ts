@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P6b",
     title: "Train on Colab — desktop Run on Colab callout + Connect modal + Colab-backed jobs",
     tag: "v0.8.9-p6b-colab-desktop",
-    commit: "PENDING",
+    commit: "6ca2f73",
     date: "2026-05-20",
     status: "current",
     features: [

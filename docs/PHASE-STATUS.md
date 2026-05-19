@@ -33,7 +33,7 @@
 | P5.fix-6 — Preserve existing splits in the splitter | ✅ done | `v0.8.6` | `c5ae06e` |
 | P5.fix-7 — Bundle our own dist-info (version badge fix) | ✅ done | `v0.8.7` | `400ba79` |
 | **P6a — Colab companion notebooks + runtime** | ✅ done | `v0.8.8-p6a-colab-notebook` | `8e3f08d` |
-| **P6b — Desktop *Run on Colab* integration** | ✅ done | `v0.8.9-p6b-colab-desktop` | PENDING |
+| **P6b — Desktop *Run on Colab* integration** | ✅ done | `v0.8.9-p6b-colab-desktop` | `6ca2f73` |
 | P6c — Polish + end-to-end pilot test | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
