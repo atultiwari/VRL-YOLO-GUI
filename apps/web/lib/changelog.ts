@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P6.fix-1",
     title: "Run on Colab callout now visible on all hardware (was MPS/CUDA-hidden)",
     tag: "v0.9.1",
-    commit: "PENDING",
+    commit: "b2dbe46",
     date: "2026-05-20",
     status: "current",
     features: [],
