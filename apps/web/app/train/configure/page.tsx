@@ -313,8 +313,11 @@ export default function TrainConfigurePage() {
         </div>
       </div>
 
-      {hardware?.kind === "cpu" ? (
-        <RunOnColabCallout onClick={() => setColabModalOpen(true)} />
+      {hardware ? (
+        <RunOnColabCallout
+          kind={hardware.kind}
+          onClick={() => setColabModalOpen(true)}
+        />
       ) : null}
 
       <div className="flex flex-col items-end gap-2">
@@ -361,7 +364,38 @@ export default function TrainConfigurePage() {
   );
 }
 
-function RunOnColabCallout({ onClick }: { onClick: () => void }) {
+function RunOnColabCallout({
+  kind,
+  onClick,
+}: {
+  kind: HardwareInfo["kind"];
+  onClick: () => void;
+}) {
+  // Three copy variants so the callout adapts to detected hardware:
+  //   - cpu: loud — local will be slow, push the user to Colab.
+  //   - mps: gentle — MPS works but a Colab T4 is often faster for YOLO.
+  //   - cuda: quietest — only mention if the user might prefer not to
+  //     pin their local GPU during training.
+  const copy =
+    kind === "cpu"
+      ? {
+          headline: "This machine has no GPU — local training will be slow.",
+          body:
+            "Train on a free Google Colab GPU instead. Live charts, save to library, and predict afterwards all work the same way.",
+        }
+      : kind === "mps"
+        ? {
+            headline:
+              "Want a faster GPU? Train on a free Colab T4 instead.",
+            body:
+              "A Colab T4 is often faster than Apple Silicon MPS for YOLO training. Live charts, save to library, and predict afterwards all work the same way.",
+          }
+        : {
+            headline: "Train on a free Google Colab GPU instead.",
+            body:
+              "Useful if you'd rather not pin this machine's GPU during training. Live charts, save to library, and predict afterwards all work the same way.",
+          };
+
   return (
     <Card className="border-amber-200 bg-amber-50">
       <CardContent className="flex items-start justify-between gap-4 py-4">
@@ -370,13 +404,8 @@ function RunOnColabCallout({ onClick }: { onClick: () => void }) {
             <Cloud className="size-4" />
           </div>
           <div>
-            <p className="text-sm font-medium text-ink">
-              This machine has no GPU — local training will be slow.
-            </p>
-            <p className="mt-1 text-xs text-ink-muted">
-              Train on a free Google Colab GPU instead. Live charts, save to
-              library, and predict afterwards all work the same way.
-            </p>
+            <p className="text-sm font-medium text-ink">{copy.headline}</p>
+            <p className="mt-1 text-xs text-ink-muted">{copy.body}</p>
           </div>
         </div>
         <Button onClick={onClick} className="shrink-0">

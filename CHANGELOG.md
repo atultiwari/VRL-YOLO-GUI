@@ -12,6 +12,15 @@ for the running tracker.
 
 ---
 
+## [0.9.1] — 2026-05-20 · P6.fix-1: Run on Colab callout now visible on all hardware (was MPS/CUDA-hidden)
+
+**Tag:** `v0.9.1`
+
+### Fixed
+- **Run on Colab callout is now visible on every hardware kind, not just CPU.** The callout was gated by `hardware?.kind === "cpu"` since P6b, which meant clinicians on MacBooks (MPS) or Linux/Windows machines with NVIDIA GPUs (CUDA) couldn't see the *Run on Colab* button at all — the entire Colab feature was unreachable from the UI on those machines. Caught by the user testing on an MPS MacBook. The callout now adapts its copy to the detected hardware: **CPU** keeps the loud warning (*"This machine has no GPU — local training will be slow"*), **MPS** softens to *"Want a faster GPU? Train on a free Colab T4 instead — often faster than Apple Silicon MPS for YOLO training"*, **CUDA** quietest (*"Train on a free Google Colab GPU instead. Useful if you'd rather not pin this machine's GPU during training"*). One callout component, three copy variants picked from a switch on `hardware.kind`.
+
+---
+
 ## [0.9.0] — 2026-05-20 · P6: Train on Colab — resilience polish, reconnect-with-backoff, retry on best.pt fetch, pilot test plan
 
 **Tag:** `v0.9-p6-train-colab` (phase-completion tag; matches PLAN.md §14)

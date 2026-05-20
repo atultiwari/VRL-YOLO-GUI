@@ -1,7 +1,7 @@
 # Phase Status
 
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones).
-> Updated at the end of each phase boundary. **Last edit: 2026-05-20 (P6 complete — Train on Colab is functionally done; pilot test plan in `docs/PILOT-TEST.md` is the v1.0 gate).**
+> Updated at the end of each phase boundary. **Last edit: 2026-05-20 (P6.fix-1 — Run on Colab callout now visible on all hardware kinds, not just CPU).**
 >
 > **Known limitations and deferred work** live in
 > [`docs/CARRY-FORWARDS.md`](CARRY-FORWARDS.md) — full diagnoses + fix
@@ -35,6 +35,7 @@
 | **P6a — Colab companion notebooks + runtime** | ✅ done | `v0.8.8-p6a-colab-notebook` | `8e3f08d` |
 | **P6b — Desktop *Run on Colab* integration** | ✅ done | `v0.8.9-p6b-colab-desktop` | `6ca2f73` |
 | **P6c — Polish: reconnect-with-backoff + fetch retry + pilot plan** | ✅ done | `v0.9-p6-train-colab` | `46c4092` |
+| P6.fix-1 — Run on Colab callout visible on all hardware kinds | ✅ done | `v0.9.1` | PENDING |
 | P7 — Polish | ⏳ next | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |

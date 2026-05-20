@@ -41,13 +41,27 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.9.1",
+    phase: "P6.fix-1",
+    title: "Run on Colab callout now visible on all hardware (was MPS/CUDA-hidden)",
+    tag: "v0.9.1",
+    commit: "PENDING",
+    date: "2026-05-20",
+    status: "current",
+    features: [],
+    fixes: [
+      "**Run on Colab callout is now visible on every hardware kind, not just CPU.** The callout was gated by `hardware?.kind === \"cpu\"` since P6b, which meant clinicians on MacBooks (MPS) or Linux/Windows machines with NVIDIA GPUs (CUDA) couldn't see the *Run on Colab* button at all — the entire Colab feature was unreachable from the UI on those machines. Caught by the user testing on an MPS MacBook. The callout now adapts its copy to the detected hardware: **CPU** keeps the loud warning (\"This machine has no GPU — local training will be slow\"), **MPS** softens to \"Want a faster GPU? Train on a free Colab T4 instead — often faster than Apple Silicon MPS for YOLO training\", **CUDA** quietest (\"Train on a free Google Colab GPU instead. Useful if you'd rather not pin this machine's GPU during training\"). One callout component, three copy variants picked from a switch on `hardware.kind`.",
+    ],
+    knownLimitations: [],
+  },
+  {
     version: "0.9.0",
     phase: "P6",
     title: "Train on Colab — resilience polish, reconnect-with-backoff, retry on best.pt fetch, pilot test plan",
     tag: "v0.9-p6-train-colab",
     commit: "46c4092",
     date: "2026-05-20",
-    status: "current",
+    status: "shipped",
     features: [
       "**Reconnect-with-backoff on tunnel drops.** `engine/colab_reader.py` now wraps the WebSocket read loop in an outer retry loop. Each attempt does a quick `GET /status?token=…` pre-flight (3 s timeout) so the reader can distinguish three failure modes instead of treating every drop the same: **auth** (HTTP 401 — notebook cell restarted with a new token, abandon immediately with a clear message), **network** (any other HTTP error / URLError — sleep + retry with exponential backoff: 2/4/8/16/32/60 s, capped at 20 attempts ≈ 18 min total), **ok** (proceed to open the WS). Free Colab GCs the runtime every few minutes; this rides through those blips without manual reconnect.",
       "**`connection` events surface reconnect state to the UI.** The reader emits synthetic `{type: 'connection', status: 'reconnecting' | 'reconnected' | 'abandoned', attempt, delay_s, message}` events into `job.events`, which the existing WS fan-out forwards to the browser. `/train/run` renders a `ColabConnectionBanner` with task-specific copy and palette (amber while reconnecting + spinner showing attempt count and back-off delay, green when reconnected — banner clears itself, red when abandoned). Frontend `TrainingEvent` union extended.",
