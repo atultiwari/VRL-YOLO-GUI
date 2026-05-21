@@ -51,12 +51,31 @@ export interface AppSettings {
    * affected (they're separate user artifacts cleaned via /models).
    */
   auto_purge_old_runs: boolean;
+
+  /**
+   * F5: when a training run completes (locally or on Colab), copy
+   * `best.pt` into the model library automatically. Default ON — a
+   * clinician who walks away during an overnight run comes back to
+   * find the model already in /models, ready for /predict.
+   *
+   * Power users running experimental sweeps where most checkpoints
+   * aren't worth keeping should flip this OFF; the manual "Save to
+   * library" button stays on /train/run and the history detail page
+   * regardless of this setting.
+   *
+   * Note: neither manual nor auto save now sets the model as the
+   * per-task default. That's a separate explicit action via the
+   * existing button on /models — see CHANGELOG v0.13.0 for the
+   * symmetry rationale.
+   */
+  auto_save_trained_models: boolean;
 }
 
 const DEFAULTS: AppSettings = {
   show_presets: false,
   timezone: "system",
   auto_purge_old_runs: false,
+  auto_save_trained_models: true,
 };
 
 const STORAGE_KEY = "vrl-yolo-gui.settings.v1";

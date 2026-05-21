@@ -507,19 +507,57 @@ def maybe_macos_dmg(app_path: Path, arch_suffix: str = "") -> Path | None:
     if dmg_path.exists():
         dmg_path.unlink()
     info("Building .dmg with create-dmg…")
-    result = subprocess.run(
-        [
-            "create-dmg",
-            "--volname", app_path.stem,
-            "--window-size", "540", "380",
-            "--icon-size", "100",
-            "--app-drop-link", "400", "190",
-            "--icon", app_path.name, "140", "190",
-            str(dmg_path),
-            str(app_path),
-        ],
-        cwd=str(DIST_DIR),
-    )
+
+    # Stage the .app alongside the first-launch helper assets
+    # (install.command + README-MACOS-FIRST-RUN.txt) so they all
+    # appear in the DMG root window when the user mounts it.
+    # Shipped from v0.13.0 onwards to fix the unsigned-app
+    # first-launch Gatekeeper friction documented in
+    # CHANGELOG v0.13.0 + assets/install/macos/README-MACOS-FIRST-RUN.txt.
+    stage_dir = DIST_DIR / f"{app_path.stem}{arch_suffix}-dmg-stage"
+    if stage_dir.exists():
+        shutil.rmtree(stage_dir)
+    stage_dir.mkdir(parents=True)
+    shutil.copytree(app_path, stage_dir / app_path.name)
+
+    install_assets = ROOT / "assets" / "install" / "macos"
+    helper_files: list[str] = []
+    for asset_name in ("install.command", "README-MACOS-FIRST-RUN.txt"):
+        src = install_assets / asset_name
+        if not src.is_file():
+            warn(f"missing macOS install asset: {src} (DMG will lack it)")
+            continue
+        dest = stage_dir / asset_name
+        shutil.copy2(src, dest)
+        # `shutil.copy2` preserves the +x bit but PyInstaller's
+        # zip-build paths occasionally strip it; re-set explicitly.
+        if asset_name.endswith(".command"):
+            dest.chmod(0o755)
+        helper_files.append(asset_name)
+
+    # create-dmg layout: app at (140, 190), Applications shortcut at
+    # (400, 190); the helper assets sit on a second row at y=320 so
+    # the user reads them after dragging the app over.
+    create_dmg_cmd = [
+        "create-dmg",
+        "--volname", app_path.stem,
+        "--window-size", "560", "440",
+        "--icon-size", "100",
+        "--app-drop-link", "400", "190",
+        "--icon", app_path.name, "140", "190",
+    ]
+    if "install.command" in helper_files:
+        create_dmg_cmd += ["--icon", "install.command", "140", "330"]
+    if "README-MACOS-FIRST-RUN.txt" in helper_files:
+        create_dmg_cmd += ["--icon", "README-MACOS-FIRST-RUN.txt", "400", "330"]
+    create_dmg_cmd += [
+        str(dmg_path),
+        str(stage_dir),
+    ]
+    result = subprocess.run(create_dmg_cmd, cwd=str(DIST_DIR))
+    # Clean the staging tree regardless of create-dmg success so
+    # the next build starts fresh.
+    shutil.rmtree(stage_dir, ignore_errors=True)
     if result.returncode != 0:
         warn("create-dmg failed; .app is still usable")
         return None

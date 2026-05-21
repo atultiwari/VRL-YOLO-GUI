@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -54,6 +54,7 @@ import {
   formatElapsed,
   usePreferredTimezone,
 } from "@/lib/format-date";
+import { useSettings } from "@/lib/settings";
 import type { TrainingEvent, TrainingMetrics, TrainingStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -190,6 +191,39 @@ function _DetailInner() {
       );
     },
   });
+
+  // F5: auto-save when the user opens a completed run that hasn't
+  // been saved yet (e.g. they walked away during training, came
+  // back later, navigated here from /train/history). One-shot per
+  // page mount via useRef so a row refresh doesn't re-fire.
+  const { settings } = useSettings();
+  const autoSaveFired = useRef(false);
+  const [autoSaveToast, setAutoSaveToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (autoSaveFired.current) return;
+    if (!settings.auto_save_trained_models) return;
+    if (!detail.data) return;
+    const r = detail.data.row;
+    if (r.status !== "completed") return;
+    if (!r.best_pt_path) return;
+    if (r.library_path) return;
+    if (save.isPending) return;
+    autoSaveFired.current = true;
+    save.mutate(undefined, {
+      onSuccess: (model) => {
+        setAutoSaveToast(
+          `Auto-saved as "${model.name}". Open Models to use it for prediction.`,
+        );
+      },
+      onError: () => {
+        // Manual Save button stays visible because library_path is
+        // still null on the row; user can retry.
+        autoSaveFired.current = false;
+      },
+    });
+    // save.mutate is a stable mutation function from React Query.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail.data, settings.auto_save_trained_models]);
 
   const remove = useMutation({
     mutationFn: async (deleteCheckpoint: boolean) =>
@@ -418,6 +452,23 @@ function _DetailInner() {
             <span>{row.error_message}</span>
           </CardContent>
         </Card>
+      ) : null}
+
+      {autoSaveToast ? (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-clinical/30 bg-clinical/10 px-3 py-2 text-sm text-ink">
+          <span>
+            <Check className="mr-1 inline size-4 text-clinical" />
+            {autoSaveToast}
+          </span>
+          <button
+            type="button"
+            onClick={() => setAutoSaveToast(null)}
+            className="text-ink-muted hover:text-ink"
+            aria-label="Dismiss"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
       ) : null}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">

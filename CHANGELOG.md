@@ -12,6 +12,31 @@ for the running tracker.
 
 ---
 
+## [0.13.0] — 2026-05-21 · F5: Auto-save trained models + macOS first-launch helper in .dmg
+
+**Tag:** `v0.13-f5-autosave` (fourth of the post-v0.9 Future-Features chain; F4 still pending. Also bundles a non-feature DMG packaging fix for the long-standing unsigned-app Gatekeeper friction.)
+
+### Added
+- **Auto-save trained models to the library** (Settings toggle, default **ON**). New `AppSettings.auto_save_trained_models: boolean` field; new row in the Train section of `/settings` (next to the F3 auto-purge toggle). When ON, the moment a training run hits `status === "completed"` AND `bestPt` is populated AND the run hasn't already been saved, the desktop kicks off the existing `save_to_library` flow automatically. A small green toast appears on `/train/run` saying *"Auto-saved as `<filename>`. Open Models to use it for prediction."* The `useRef`-guarded `useEffect` makes this a one-shot per page mount; a re-render or WS replay can't double-fire. **Frontend-only feature** — no backend changes needed; uses the existing `POST /api/training/{id}/save-to-library` route.
+- **Auto-save also fires on `/train/history/view`** when the user opens a completed run that finished while they were elsewhere (the classic "walked away during an overnight run, came back hours later, navigated to history" path). Same useRef guard; if the row already has `library_path` populated, the effect no-ops. Toast appears on the detail page in the same shape.
+- **Manual "Save to library" button stays available** on both `/train/run` and `/train/history/view` regardless of the auto-save setting — covers (a) users who flipped auto-save OFF, (b) users whose auto-save failed (the row's `library_path` stays null on failure so the button reappears), and (c) experimental sweeps where the user wants to review each checkpoint before keeping it.
+- **macOS install assets bundled inside the .dmg** (closes the unsigned-app first-launch Gatekeeper friction one of our test installs hit on v0.12.0). Two new files now sit next to the `.app` icon when a clinician mounts the DMG: **`install.command`** (double-click in Finder to clear the `com.apple.quarantine` xattr from the installed `.app`; the script handles the "app not in /Applications yet" case + the "no write permission" case with a `sudo` suggestion) and **`README-MACOS-FIRST-RUN.txt`** (plain-text two-step quick-start at the top; full Gatekeeper explainer + three manual alternatives + troubleshooting + project links below). Source files live at `assets/install/macos/`; `scripts/build-release.py::maybe_macos_dmg` now stages them alongside the .app in a temp directory and passes it to `create-dmg` so both helpers land in the DMG root window. Window size bumped from 540×380 to 560×440 to fit the second row of icons.
+
+### Changed
+- **Manual "Save to library" no longer marks the saved model as the per-task default.** F5 made auto-save deliberately *not* auto-set-as-default (a clinician training 10 experimental runs in a row shouldn't have their `/predict` default thrash 10 times). For symmetry, the manual save path also drops its `setDefaultModel` call — so both manual and auto save now do exactly one thing: copy `best.pt` into the library. Marking a model as the per-task default becomes a separate explicit action via the existing "Set as default" button on each `/models` card. **Behavioural shift:** users who previously relied on the implicit "save = also make default" coupling will need one extra click on `/models` to mark their fresh checkpoint as the default. Called out here so the change is visible.
+
+### Fixed
+- Nothing user-visible — this is a feature release. F5 implementation surfaced no new bugs.
+
+### Known limitations (deferred)
+- **Auto-save only fires on the two pages that watch for completion** (`/train/run` and `/train/history/view`). A clinician who closes both pages mid-training and reopens the app later — say, from a cold start the next morning — will see the run in `/train/history` as "completed" with no library checkpoint; auto-save fires the moment they open the detail page. There's no background job that auto-saves runs without a user-facing page open. Acceptable for v1 — clinicians watching a multi-hour run will naturally land on one of those pages.
+- **Auto-save doesn't auto-set-as-default** (deliberate; see Changed). If pilot users repeatedly complain that the new manual setDefaultModel step is friction, we revisit with a per-task "auto-set-as-default" sub-setting in v1.1.
+- **install.command doesn't work if the user copied the .app outside /Applications.** The script hard-codes `/Applications/VRL YOLO GUI.app` as the target path. Most users follow the standard drag-to-Applications flow shown in the DMG window so this is fine, but power users running from `~/Applications` or elsewhere need to run `xattr -dr com.apple.quarantine` manually on their chosen path (the README documents the command).
+- **install.command requires Terminal access.** macOS environments with Terminal disabled (rare on personal Macs, more common in locked-down hospital IT setups) can't double-click it. The README's Option A (right-click → Open) covers those users.
+- **The DMG layout still looks like a basic Finder window** — no custom background image or polish beyond the two-row icon grid. Future packaging polish if needed; functional today.
+
+---
+
 ## [0.12.0] — 2026-05-21 · F3: Persistent training history — SQLite + /train/history + edit-lock removed
 
 **Tag:** `v0.12-f3-history` (third of the post-v0.9 Future-Features chain from `docs/FUTURE-FEATURES.md`; plan in `docs/PLAN-F3.md`; also added F5 to `docs/FUTURE-FEATURES.md` for the upcoming auto-save toggle.)

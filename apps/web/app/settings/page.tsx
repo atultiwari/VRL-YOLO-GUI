@@ -244,6 +244,14 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <ToggleRow
+              label="Auto-save trained models to the library"
+              description={
+                "When a training run finishes, automatically copy best.pt into Models (with the run's name as the filename). Turn off if you'd rather review each run and save only the keepers — the Save to library button stays available on /train/run and the history detail page either way."
+              }
+              checked={settings.auto_save_trained_models}
+              onChange={(v) => setSetting("auto_save_trained_models", v)}
+            />
+            <ToggleRow
               label="Auto-purge training runs older than 30 days"
               description={
                 "When you open Training History, automatically delete rows whose Started date is more than 30 days ago. Library checkpoints stay in /models — only the history record and replay events are removed."

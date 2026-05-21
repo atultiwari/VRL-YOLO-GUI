@@ -3,8 +3,8 @@
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones)
 > plus the post-v0.9 Future-Features chain in
 > [`docs/FUTURE-FEATURES.md`](FUTURE-FEATURES.md). Updated at the end of
-> each phase boundary. **Last edit: 2026-05-21 (F3 — Persistent
-> training history; SQLite + /train/history + edit-lock removed).**
+> each phase boundary. **Last edit: 2026-05-21 (F5 — Auto-save trained
+> models + macOS first-launch helper in .dmg).**
 >
 > **Known limitations and deferred work** live in
 > [`docs/CARRY-FORWARDS.md`](CARRY-FORWARDS.md) — full diagnoses + fix
@@ -42,14 +42,14 @@
 | **F1 — Models library: delete + reveal + path on every card** | ✅ done | `v0.10-f1-models-polish` | `788dee3` |
 | **F2 — Training-run name + description + app-wide TZ setting** | ✅ done | `v0.11-f2-run-naming` | `fd429fc` |
 | **F3 — Persistent training history (SQLite + /train/history)** | ✅ done | `v0.12-f3-history` | `9ca25b5` |
-| F4 — Dataset library: reuse + grouping | ⏳ pending (depends F3) | — | — |
-| F5 — Auto-save trained models to library (Settings toggle, default ON) | ⏳ next | — | — |
+| **F5 — Auto-save trained models + macOS first-launch helper in .dmg** | ✅ done | `v0.13-f5-autosave` | _SHA pending_ |
+| F4 — Dataset library: reuse + grouping | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at the F3 commit (`v0.12-f3-history`). **F3 introduces the first real persistence dependency** in `server/vrl_yolo/` — SQLite at `<storage_root>/training.db` plus per-run `events.jsonl(.gz)` sidecars. Every training run (local + Colab) writes a history row + a replay sidecar from the moment it starts; rows update through the lifecycle and gain `library_path` when save-to-library succeeds. New `/train/history` page lists runs with task/status/dataset filters + sort dropdowns; new `/train/history/view?id=…` detail page replays the run's complete event stream into the same recharts components `/train/run` uses. F2's PATCH edit-lock is removed — completed runs are now editable via the history layer. New opt-in auto-purge setting (>30 days, default OFF) in a new **Train** section of `/settings` that F5 will add its auto-save toggle to. 89 total backend tests + tsc green. **Next:** F5 — Auto-save trained models to library (the user's reordered fourth item from `docs/FUTURE-FEATURES.md`). F4 (Dataset library) follows after F5.
+**Current head:** `main` at the F5 commit (`v0.13-f5-autosave`). **F5 is the smallest of the F-chain — frontend-only auto-save with a behaviour-shift on the manual save path for symmetry.** New "Auto-save trained models" toggle in the Train section of /settings (default ON; sits next to F3's auto-purge toggle). Auto-save fires on both `/train/run` (live completion) and `/train/history/view` (completed run that finished while the user was elsewhere). Both auto and manual save now drop the implicit `setDefaultModel` call — saving to library and marking as default become two distinct actions. Also ships the **macOS install assets** (`install.command` + `README-MACOS-FIRST-RUN.txt`) inside the .dmg to close the unsigned-app first-launch Gatekeeper friction one of our test installs hit on v0.12.0. 89 backend tests + tsc green. **Next:** F4 — Dataset library: reuse + grouping by dataset (the last item in the F-chain). After F4, the F-chain is complete and we return to P7 (Polish) per PLAN.md §14.
 
 ---
 
@@ -692,18 +692,46 @@ In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runne
 
 ---
 
-## Up next: F5 — Auto-save trained models to library
+### ✅ F5 — Auto-save trained models + macOS first-launch helper in .dmg · `v0.13-f5-autosave` · _SHA pending_
 
-**Estimated small (~½ day)** per `docs/FUTURE-FEATURES.md` item 5. User reordered to ship F5 right after F3 (F4 follows) since the history record now shows which runs got auto-saved, making F5's UX immediately meaningful. Frontend-only — no backend changes needed.
+**Trigger:** fourth of the post-v0.9 Future-Features items, user reordered to ship F5 before F4 since the F3 history record makes F5's UX immediately meaningful (the user can see which runs got auto-saved in the table). All FUTURE-FEATURES.md §5 decisions were already signed off (default ON, new Train section, no auto-set-as-default, ship after F3); no separate PLAN-F5.md was drafted since the implementation was small + the decisions clear. The DMG packaging fix was added mid-commit after the user hit a Gatekeeper-rejection on the v0.12.0 release.
 
-- New `AppSettings.auto_save_trained_models: boolean` (default **ON**) on the Train section of `/settings` (the section F3 just created).
-- `/train/run` watches for status transitions to `"completed"`. When the transition fires + the setting is ON + `bestPt !== null` + `savedModel === null`, automatically dispatch the existing `save.mutate()`. Guarded by `useRef(false)` so a re-render or replay doesn't double-fire. Same auto-fire on `/train/history/view` for runs that completed while the user was elsewhere.
-- Small toast on success: *"Auto-saved as `<filename>`"* with a link to `/models`.
-- **Behaviour change:** auto-save does NOT auto-set-as-default. For symmetry, the manual save path also drops its `setDefaultModel` call — "saving to library" and "marking as default" become two distinct actions for both paths. Called out clearly in the F5 changelog.
+**Scope shipped:**
 
-**Open decisions for F5 sign-off** (before code): nothing material — the FUTURE-FEATURES decisions (default ON, new Train section, no auto-default, ship after F3) are signed off. Implementation should be straightforward.
+| # | Subject | Outcome |
+|---|---|---|
+| F5.1 | `AppSettings.auto_save_trained_models: boolean` (default true) | New field on the persisted settings shape; `mergeWithDefaults` handles existing users gracefully. Sits next to F3's `auto_purge_old_runs` in the new Train section of `/settings`. |
+| F5.2 | New ToggleRow on `/settings` Train section | "Auto-save trained models to the library" with copy explaining when it fires + when to flip it OFF. The user calls out that the manual button stays available either way. |
+| F5.3 | `/train/run` auto-save useEffect | Watches the existing `status` / `bestPt` / `savedModel` state. When all three align with the setting ON + `save.isPending` false, fires `save.mutate()` once (useRef guard). Onsuccess populates `autoSaveToast`; onError clears the useRef guard so the manual button (still visible because `savedModel` stays null on failure) can retry. |
+| F5.4 | `/train/history/view` auto-save useEffect | Same shape — fires on mount when the row has `status === "completed"` + `best_pt_path` + no `library_path` + setting ON. Same useRef guard. Useful for clinicians who closed `/train/run` before the run finished and come back later via the history page. |
+| F5.5 | Toast UI on both pages | Green clinical-tone banner ("Auto-saved as 'X'. Open Models to use it for prediction.") with a dismiss `X` button. Slots right after the F3 ColabConnectionBanner on `/train/run` and right after the error_message card on `/train/history/view`. |
+| F5.6 | Symmetry: drop `setDefaultModel` from manual save too | Both paths now do exactly one thing: copy `best.pt` into the library. Marking a model as the per-task default becomes a separate explicit click on `/models`. Documented as a Changed entry in CHANGELOG v0.13.0 so the behaviour shift is visible. |
+| F5.7 | `assets/install/macos/install.command` | New executable shell script. Removes the `com.apple.quarantine` xattr from `/Applications/VRL YOLO GUI.app` so Gatekeeper allows the unsigned binary to launch. Handles "app not in /Applications" with a clear error + the "no write permission" case with a `sudo` suggestion. Pauses for any-key at the end so the Terminal window doesn't vanish before the user reads the output. |
+| F5.8 | `assets/install/macos/README-MACOS-FIRST-RUN.txt` | New plain-text README with a two-step quick-start at the top, then a full Gatekeeper explainer (why the app is unsigned + what quarantine does), three manual alternatives (right-click → Open, System Settings, raw Terminal command), and a troubleshooting section for the "no write permission" case. Ends with project links + the path to `~/Library/Application Support/VRL-YOLO-GUI/logs/launch.log` for diagnosing failed-launch attempts. |
+| F5.9 | `scripts/build-release.py::maybe_macos_dmg` updated | Stages the `.app` + both install assets in a temp `dist/<stem>-dmg-stage/` directory and passes that directory to `create-dmg` (was: just the `.app`). DMG window grew from 540×380 to 560×440 to fit the second row of icons (install.command at y=330 left, README-MACOS-FIRST-RUN.txt at y=330 right). Re-sets the `+x` bit on `install.command` after the copy (PyInstaller's zip-build paths occasionally strip it). Graceful fallback if the install assets are missing — warns + continues without them. |
+| F5.10 | Verification | Backend: full pytest sweep (89 tests, all green) + tsc clean. Frontend: rebuilt the static export, sizes ticked up `/train/run` 7.53→7.73 kB + `/train/history/view` 6.43→6.71 kB (the auto-save useEffect + toast). User manually verified the full F5 UX in the desktop binary — auto-save toast fires on completion, "Save to library" disappears, "In library?" column flips to ✓; toggle OFF preserves manual behaviour. |
 
-**Phase tag at completion:** `v0.13-f5-autosave`.
+**Carried-forward:**
+- Auto-save only fires on the two pages that watch for completion (`/train/run` and `/train/history/view`). A clinician who closes both pages mid-training and comes back later sees the run as "completed" in `/train/history`; auto-save fires the moment they open the detail page. There's no background job for fully-headless auto-save.
+- Auto-save deliberately doesn't auto-set-as-default. Manual save ALSO drops `setDefaultModel` for symmetry. Users who relied on the implicit coupling need one extra click on `/models`.
+- `install.command` hard-codes `/Applications` as the install target. Users who put the .app elsewhere need to run the `xattr` command manually (documented in the README).
+- `install.command` needs Terminal access. Locked-down environments where Terminal is disabled need the right-click → Open path documented in the README.
+- The DMG layout is the default Finder window — no custom background polish.
+
+---
+
+## Up next: F4 — Dataset library: reuse + grouping by dataset
+
+**Estimated medium (3–5 days)** per `docs/FUTURE-FEATURES.md` item 4. Last item in the F-chain — after F4, we return to P7 (Polish) per PLAN.md §14.
+
+- New `/api/datasets` (list) returning every dataset under `<storage>/datasets/` with task, image count, split layout, plus (using F3's history rows) `last_used_at` + `run_count`.
+- `/train/dataset` gains a two-tab card: **Drop a folder** (existing dropzone) vs **Pick from library**. Library tab is a list with the fields above + a "Use this dataset" CTA. Picking jumps straight to dataset-inspect with the existing dataset id, skipping the upload step.
+- `/train/history` page header gets a "Dataset" filter dropdown populated from distinct dataset_id values. The dataset library list links to "View all runs on this dataset" (= `/train/history?dataset=<id>`).
+- New `DELETE /api/datasets/{id}` route. Confirmation modal warns if there are saved training-history rows referencing it ("3 runs reference this dataset; their checkpoints remain in the library but the dataset itself will be gone — re-run with same settings will be unavailable for them"). Doesn't delete the runs themselves (F3's `dataset_missing` flag covers them).
+
+**Open decisions for F4 sign-off** (before code): dataset naming (UUID-only vs optional name+description like F2's run naming); whether to show partially-uploaded datasets that failed inspect_dataset; how the "library" tab interacts with multi-user shared datasets (out-of-scope per PLAN.md §13.5 but worth confirming).
+
+**Phase tag at completion:** `v0.14-f4-dataset-library`. After F4 ships, the F-chain is complete and **P7 — Polish** is next per PLAN.md §14.
 
 ---
 

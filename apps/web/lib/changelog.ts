@@ -41,13 +41,36 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.13.0",
+    phase: "F5",
+    title: "Auto-save trained models + macOS first-launch helper in .dmg",
+    tag: "v0.13-f5-autosave",
+    commit: "PENDING",
+    date: "2026-05-21",
+    status: "current",
+    features: [
+      "**Auto-save trained models to the library** (Settings toggle, default ON). New row in the Train section of /settings. When ON, the moment a training run hits status === 'completed' AND bestPt is populated AND the run hasn't already been saved, the desktop kicks off the existing save-to-library flow automatically. Green toast appears: 'Auto-saved as \"<filename>\". Open Models to use it for prediction.' useRef-guarded so a re-render or WS replay can't double-fire.",
+      "**Auto-save also fires on /train/history/view** when the user opens a completed run that finished while they were elsewhere. Same useRef guard; if the row already has library_path populated, the effect no-ops.",
+      "**Manual Save to library button stays available** on both /train/run and /train/history/view regardless of the auto-save setting — covers users who flipped it OFF, users whose auto-save failed, and experimental sweeps where each checkpoint needs review.",
+      "**macOS install assets bundled in the .dmg** (closes the unsigned-app first-launch Gatekeeper friction one of our test installs hit on v0.12.0). Two new files sit next to the .app icon when the DMG is mounted: install.command (double-click in Finder to clear `com.apple.quarantine`; handles 'app not in /Applications' + 'no write permission' edge cases) and README-MACOS-FIRST-RUN.txt (two-step quick-start + full Gatekeeper explainer + 3 manual alternatives + troubleshooting). Source files at assets/install/macos/; scripts/build-release.py::maybe_macos_dmg stages them alongside the .app and passes to create-dmg.",
+    ],
+    fixes: [],
+    knownLimitations: [
+      "Auto-save only fires on the two pages that watch for completion (/train/run and /train/history/view). A clinician who closes both pages mid-training and comes back later will see the run as 'completed' in /train/history; auto-save fires the moment they open the detail page. There's no background job for fully-headless auto-save.",
+      "Auto-save deliberately doesn't auto-set-as-default. To keep manual + auto save behaviour consistent, manual save ALSO drops its setDefaultModel call — saving to library and marking as default are now two distinct actions. Users who relied on the implicit coupling need one extra click on /models.",
+      "install.command hard-codes /Applications as the install target. Users who put the .app elsewhere need to run `xattr -dr com.apple.quarantine` manually on their chosen path (documented in the README).",
+      "install.command needs Terminal access. Locked-down environments where Terminal is disabled need to use the right-click→Open path documented in the README.",
+      "The DMG layout is the basic Finder window — no custom background polish. Functional today; future packaging polish if needed.",
+    ],
+  },
+  {
     version: "0.12.0",
     phase: "F3",
     title: "Persistent training history — SQLite + /train/history + edit-lock removed",
     tag: "v0.12-f3-history",
     commit: "9ca25b5",
     date: "2026-05-21",
-    status: "current",
+    status: "shipped",
     features: [
       "**Persistent training-run history.** Every run (local + Colab) writes to SQLite at `<storage_root>/training.db` from the moment training starts. The `training_runs` table carries the full lifecycle context — name + description (F2), task, dataset_id + snapshot, base_model, hyperparams, accelerator, started_at, finished_at, status, epoch_current, error_message, best_pt_path, library_path, final_metrics — and updates on every terminal event + after save_to_library succeeds. Schema is hand-rolled (`schema_version` int + ordered migrations); F3 ships v1. Fresh installs migrate v0→v1 transparently.",
       "**`/train/history` page** — sortable + filterable table of every run ever. Filter chips: Task / Status / Dataset. Sort: Most recent / Name (A→Z) / Duration. Empty state suggests starting a run. Rows whose dataset folder has been deleted show greyed + line-through with a tooltip; Re-run disabled. Manual 'Clean up runs older than 30 days' button.",

@@ -46,7 +46,6 @@ import {
   cancelTraining,
   getTrainingJob,
   saveTrainingToLibrary,
-  setDefaultModel,
   trainingStreamUrl,
   updateTrainingMetadata,
 } from "@/lib/api";
@@ -55,6 +54,7 @@ import {
   formatElapsed,
   usePreferredTimezone,
 } from "@/lib/format-date";
+import { useSettings } from "@/lib/settings";
 import { useTrainStore } from "@/lib/train-store";
 import type {
   ModelInfo,
@@ -320,17 +320,12 @@ export default function TrainRunPage() {
   const save = useMutation({
     mutationFn: async () => {
       if (!activeJobId) throw new Error("no active job");
-      const model = await saveTrainingToLibrary(activeJobId);
-      // Make this model the new default for /predict so the trained run
-      // is one click away. Use the model's reported task (not the
-      // snapshot's) — the server is the source of truth for what the
-      // checkpoint actually contains.
-      try {
-        await setDefaultModel(model.task, model.name);
-      } catch {
-        // Non-fatal — the model is in the library either way.
-      }
-      return model;
+      // F5: no more implicit setDefaultModel here — saving to library
+      // and marking as default are now two distinct actions for both
+      // manual and auto-save paths (symmetry call-out in CHANGELOG
+      // v0.13.0). The "Set as default" button on /models is the only
+      // way a model becomes the per-task default now.
+      return saveTrainingToLibrary(activeJobId);
     },
     onSuccess: (model) => {
       setSavedModel(model);
@@ -341,6 +336,43 @@ export default function TrainRunPage() {
         `save failed · ${err instanceof Error ? err.message : "unknown"}`,
       ),
   });
+
+  // F5: auto-save when training completes — if the setting is ON,
+  // best.pt has been produced, and no manual save has fired yet. The
+  // useRef guard makes this a one-shot per page mount, so a re-render
+  // or WS replay can't double-fire. Toast surfaces the save so the
+  // user knows what happened without having to scan logs.
+  const { settings } = useSettings();
+  const autoSaveFired = useRef(false);
+  const [autoSaveToast, setAutoSaveToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (autoSaveFired.current) return;
+    if (!settings.auto_save_trained_models) return;
+    if (status !== "completed") return;
+    if (!bestPt) return;
+    if (savedModel) return;
+    if (save.isPending) return;
+    autoSaveFired.current = true;
+    save.mutate(undefined, {
+      onSuccess: (model) => {
+        setAutoSaveToast(
+          `Auto-saved as "${model.name}". Open Models to use it for prediction.`,
+        );
+      },
+      onError: () => {
+        // Failure already logged + surfaced via the manual button
+        // (which stays available because savedModel stays null).
+        autoSaveFired.current = false;
+      },
+    });
+    // save.mutate is a stable mutation function from React Query.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    status,
+    bestPt,
+    savedModel,
+    settings.auto_save_trained_models,
+  ]);
 
   // F2: live-edit name + description while the run is in flight.
   // Server gates the PATCH at queued/running and returns 409 otherwise;
@@ -653,6 +685,23 @@ export default function TrainRunPage() {
 
       {colabConnection ? (
         <ColabConnectionBanner state={colabConnection} />
+      ) : null}
+
+      {autoSaveToast ? (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-clinical/30 bg-clinical/10 px-3 py-2 text-sm text-ink">
+          <span>
+            <Check className="mr-1 inline size-4 text-clinical" />
+            {autoSaveToast}
+          </span>
+          <button
+            type="button"
+            onClick={() => setAutoSaveToast(null)}
+            className="text-ink-muted hover:text-ink"
+            aria-label="Dismiss"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
       ) : null}
 
       <ProgressCard
