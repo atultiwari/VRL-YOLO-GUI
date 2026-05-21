@@ -39,7 +39,7 @@
 | **P6b — Desktop *Run on Colab* integration** | ✅ done | `v0.8.9-p6b-colab-desktop` | `6ca2f73` |
 | **P6c — Polish: reconnect-with-backoff + fetch retry + pilot plan** | ✅ done | `v0.9-p6-train-colab` | `46c4092` |
 | P6.fix-1 — Run on Colab callout visible on all hardware kinds | ✅ done | `v0.9.1` | `b2dbe46` |
-| **F1 — Models library: delete + reveal + path on every card** | ✅ done | `v0.10-f1-models-polish` | _SHA pending_ |
+| **F1 — Models library: delete + reveal + path on every card** | ✅ done | `v0.10-f1-models-polish` | `788dee3` |
 | F2 — Training-run name + description | ⏳ next | — | — |
 | F3 — Persistent training history | ⏳ pending (depends F2) | — | — |
 | F4 — Dataset library: reuse + grouping | ⏳ pending (depends F3) | — | — |
@@ -595,7 +595,7 @@ In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runne
 
 **Carried-forward:** none. The earlier v0.8.5 / v0.8.6 binaries on existing installs will still show the wrong badge — there's no in-app remediation, the user has to reinstall from v0.8.7 onward to see the fix.
 
-### ✅ F1 — Models library: delete + reveal on disk + path on every card · `v0.10-f1-models-polish` · _SHA pending_
+### ✅ F1 — Models library: delete + reveal on disk + path on every card · `v0.10-f1-models-polish` · `788dee3`
 
 **Trigger:** first of the four post-v0.9 Future-Features items from `docs/FUTURE-FEATURES.md`, planned in detail in `docs/PLAN-F1.md` and signed off (4 decisions: hard-delete, 403 for bundled, path shown on every card, reveal on every card) before any code landed. User explicitly reordered the F-chain to land before P7 (Polish).
 

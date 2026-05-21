@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "F1",
     title: "Models library: delete + reveal on disk + path on every card",
     tag: "v0.10-f1-models-polish",
-    commit: "PENDING",
+    commit: "788dee3",
     date: "2026-05-21",
     status: "current",
     features: [
