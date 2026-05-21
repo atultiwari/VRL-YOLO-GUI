@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import platform
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -34,6 +36,7 @@ def _record_to_info(record) -> ModelInfo:
         classes=record.classes,
         params=record.params,
         size_mb=round(record.size_mb, 2),
+        path=str(record.path),
     )
 
 
@@ -137,6 +140,73 @@ def rename_model(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
     return _record_to_info(record)
+
+
+@router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_model(
+    name: str, registry: ModelRegistry = Depends(get_registry)
+) -> None:
+    """Hard-delete a user-imported or locally-trained checkpoint.
+
+    Bundled weights are rejected with 403 — they live in the install
+    tree and are re-fetchable by `scripts/fetch-models.py`. Per-task
+    defaults pointing at the deleted name are cleared from
+    `defaults.json`; `get_defaults()` then falls back to any remaining
+    model of the right task on the next read.
+    """
+    try:
+        registry.delete(name)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"model {name!r} not found"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
+
+
+@router.post("/{name}/reveal", status_code=status.HTTP_204_NO_CONTENT)
+def reveal_model(
+    name: str, registry: ModelRegistry = Depends(get_registry)
+) -> None:
+    """Open the OS file manager scoped to this checkpoint.
+
+    Reveal-on-disk has to live on the backend because the QtWebEngine
+    renderer is sandboxed — it can't spawn `open` / `explorer` /
+    `xdg-open` directly.
+
+    The path comes from a registry record (anchored at `_bundled_dir`
+    / `_user_dir`), never user-controlled — no path-traversal surface.
+    """
+    try:
+        record = registry.get(name)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"model {name!r} not found"
+        ) from exc
+    if not record.path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=f"checkpoint file missing on disk: {record.path}",
+        )
+
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            subprocess.run(["open", "-R", str(record.path)], check=False)
+        elif system == "Windows":
+            # `/select,<path>` — note: no space after the comma.
+            subprocess.run(["explorer", f"/select,{record.path}"], check=False)
+        else:
+            # Linux + fallbacks: open the containing folder. xdg-open
+            # doesn't have an equivalent of /select.
+            subprocess.run(["xdg-open", str(record.path.parent)], check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"could not open file manager: {exc}",
+        ) from exc
 
 
 def _sanitised_basename(raw: str | None) -> str:

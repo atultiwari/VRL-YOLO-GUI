@@ -2900,7 +2900,7 @@ wheels = [
 
 [[package]]
 name = "vrl-yolo-gui"
-version = "0.8.9"
+version = "0.10.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

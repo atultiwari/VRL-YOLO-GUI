@@ -12,6 +12,30 @@ for the running tracker.
 
 ---
 
+## [0.10.0] — 2026-05-21 · F1: Models library — delete + reveal on disk + path on every card
+
+**Tag:** `v0.10-f1-models-polish` (first of the post-v0.9 Future-Features chain from `docs/FUTURE-FEATURES.md`)
+
+### Added
+- **Delete a user-imported or locally-trained checkpoint from the library.** New `DELETE /api/models/{name}` route + `ModelRegistry.delete(name)`. Hard-delete (Finder Trash is the macOS safety net; `models/` lives under `~/Library/Application Support/`). Bundled weights are rejected with **HTTP 403** ("read-only — they live in the install tree and `scripts/fetch-models.py` would re-fetch them anyway") rather than 400, so the frontend can distinguish policy-rejected from malformed. Deleting a model that's currently the per-task default drops the entry from `defaults.json`; `get_defaults()` then falls back to any remaining model of the right task on the next read, so the next request returns a coherent state. If the `.pt` file already disappeared (someone deleted it externally between `scan()` and the click), the registry tolerates the `FileNotFoundError` and still cleans up its in-memory record + defaults so the UI stops showing a ghost entry.
+- **Reveal a checkpoint in the OS file manager.** New `POST /api/models/{name}/reveal` route. Has to live on the backend because the QtWebEngine renderer is sandboxed — it can't spawn `open` / `explorer` / `xdg-open` directly. Per-OS dispatch: macOS `open -R "<path>"` (selects the file in Finder), Windows `explorer /select,<path>` (selects in Explorer — note no space after the comma), Linux `xdg-open <parent_dir>` (opens the containing folder; xdg-open has no /select equivalent). `subprocess.run(check=False)` so a non-zero file-manager exit doesn't fail the request — the Finder window appearing IS the success signal. 404 if the model name is unknown; 410 Gone if the registry knows the name but the file vanished from disk.
+- **`path` field on every `ModelInfo` response.** Absolute on-disk path surfaced via the API for the first time. Bundled, user-imported, and trained-locally checkpoints all carry it — consistent affordance across sources.
+- **Path row on every model card** in `/models`. New section below Size: "On disk · `<absolute path>`" rendered in monospace, truncated with `title` for hover-to-reveal-full-path. A pathologist who trains 20 classify runs can now see where their checkpoints actually live without spelunking the storage root.
+- **Reveal-in-Finder button** on every card (bundled too, per the F1 decision pass). Calls the new `/reveal` route; no success toast (the Finder window IS the signal). Errors surface inline at the bottom of the card via a small red banner.
+- **Delete button** on user/trained cards. Bundled cards show the button disabled with a tooltip ("Bundled models are read-only"). Click opens a confirmation modal that quotes the file name + full path, calls `DELETE /api/models/{name}`, and on success invalidates the `["models"]` query so the card disappears without a page reload. On error the modal stays open with the `ApiError.message` inline so the user can read it and either retry or cancel.
+- **Eight new backend tests in `tests/test_models_api.py`** (the project's first dedicated model-API test file): user delete removes file + record; bundled delete → 403 + file untouched; missing name → 404; deleting the current default clears it from defaults.json and `get_defaults()` falls back; deleting tolerates the file already being missing; path field present on both list + single responses; reveal dispatches `open -R` on Darwin, `explorer /select,<path>` on Windows, `xdg-open` on Linux; reveal returns 404 for unknown names + 410 for missing files without ever calling subprocess. Fixture uses a synthetic `_inspect` so the suite runs in <1 s without needing the `ml` extra or any real `.pt` content.
+
+### Fixed
+- Nothing user-visible — this is a feature release. F1 is the smallest of the four post-v0.9 features in `docs/FUTURE-FEATURES.md`, planned in `docs/PLAN-F1.md` and signed off before any code landed.
+
+### Known limitations (deferred)
+- **Delete is unguarded against in-flight inference / training jobs.** If you delete a model while a `POST /api/inference/single` is mid-flight, the YOLO instance the request captured stays alive in the request-scoped local but its `path` is now a dead pointer; the inference completes, the next request fails to load (file missing), and the user sees a clear error. No data loss, but worth a follow-up before pilot — tracked as a one-line F1 carry-forward (see `docs/CARRY-FORWARDS.md` after this release).
+- **Soft-delete / Trash / Undo is not implemented.** Hard-delete only. macOS Finder Trash is the system-level safety net since `models/` lives under `~/Library/Application Support/`. If pilot users repeatedly ask "I deleted the wrong one, can I recover it?" we revisit.
+- **No "warn if a saved prediction report references this model" guard** in the delete confirmation (called out in FUTURE-FEATURES.md item 1's acceptance criteria). That guard requires the persistent training-history layer from F3 to be meaningful. Plain confirmation modal for now; we add the cross-reference in F3.
+- **`settings.mode === "desktop"` gate is not applied to the Reveal button** (FUTURE-FEATURES.md originally specified it). That setting doesn't exist yet — and this project is always-desktop by definition (Pyloid + QtWebEngine binary, no web-mode build). If a web build ever ships, this becomes a real gate.
+
+---
+
 ## [0.9.1] — 2026-05-20 · P6.fix-1: Run on Colab callout now visible on all hardware (was MPS/CUDA-hidden)
 
 **Tag:** `v0.9.1`

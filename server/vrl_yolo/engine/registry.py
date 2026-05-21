@@ -248,6 +248,56 @@ class ModelRegistry:
             self.scan()
             return self._records[new_name]
 
+    def delete(self, name: str) -> None:
+        """Remove a user/trained checkpoint from disk and the registry.
+
+        Bundled weights are rejected — they're part of the install tree
+        and `scripts/fetch-models.py` would re-fetch them anyway. The
+        rest sit under `<storage_root>/models/<task>/` where the user
+        owns the filesystem.
+
+        Side effects beyond the unlink itself:
+          * Drop the entry from `defaults.json` if it was a per-task
+            default. `get_defaults()` already falls back to "any
+            record of the right task" on the next read, so we don't
+            need to auto-pick a successor here.
+          * Evict the warm YOLO instance from the LRU.
+          * Re-scan so `_records` no longer lists the name.
+
+        Tolerates a file already missing on disk (the on-disk state
+        wins — we still clean up the registry + defaults so the UI
+        stops showing a ghost entry).
+        """
+        with self._lock:
+            if name not in self._records:
+                raise KeyError(name)
+            record = self._records[name]
+            if record.source == "bundled":
+                raise ValueError(
+                    f"{name!r} is a bundled model — bundled weights are read-only"
+                )
+
+            try:
+                record.path.unlink()
+            except FileNotFoundError:
+                pass
+
+            if self._defaults_path.is_file():
+                try:
+                    current = json.loads(self._defaults_path.read_text())
+                except (OSError, json.JSONDecodeError):
+                    current = {}
+                touched = False
+                for task, picked in list(current.items()):
+                    if picked == name:
+                        del current[task]
+                        touched = True
+                if touched:
+                    self._defaults_path.write_text(json.dumps(current, indent=2))
+
+            self._yolo_cache.pop(name, None)
+            self.scan()
+
     def set_default(self, task: Task, name: str) -> None:
         with self._lock:
             record = self.get(name)

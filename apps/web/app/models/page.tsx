@@ -7,9 +7,11 @@ import {
   Check,
   Cpu,
   Download,
+  FolderOpen,
   Microscope,
   PencilLine,
   Star,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -28,10 +30,12 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import {
   ApiError,
+  deleteModel,
   fetchModels,
   importModel,
   modelDownloadUrl,
   renameModel,
+  revealModel,
   setDefaultModel,
 } from "@/lib/api";
 import { cn, formatBytes, formatParams } from "@/lib/utils";
@@ -57,11 +61,15 @@ function ModelCard({
   const queryClient = useQueryClient();
   const classList = Object.values(model.classes).slice(0, 4).join(", ");
   const more = Math.max(0, model.num_classes - 4);
-  const canRename = model.source !== "bundled";
+  const isBundled = model.source === "bundled";
+  const canRename = !isBundled;
+  const canDelete = !isBundled;
 
   const [isRenaming, setIsRenaming] = useState(false);
   const [draft, setDraft] = useState(model.name);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const rename = useMutation({
     mutationFn: async () => {
@@ -82,6 +90,20 @@ function ModelCard({
           : err instanceof Error
           ? err.message
           : "Rename failed",
+      );
+    },
+  });
+
+  const reveal = useMutation({
+    mutationFn: async () => revealModel(model.name),
+    onSuccess: () => setRevealError(null),
+    onError: (err) => {
+      setRevealError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+          ? err.message
+          : "Could not open file manager",
       );
     },
   });
@@ -157,10 +179,27 @@ function ModelCard({
           <span>Size</span>
           <span className="font-medium text-ink">{formatBytes(model.size_mb)}</span>
         </div>
+        <div className="border-t border-surface-muted pt-2">
+          <span className="block text-xs uppercase tracking-wide text-ink-muted/70">
+            On disk
+          </span>
+          <code
+            className="mt-1 block truncate font-mono text-xs text-ink-muted"
+            title={model.path}
+          >
+            {model.path}
+          </code>
+        </div>
         {renameError ? (
           <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-800">
             <AlertTriangle className="mt-0.5 size-3 shrink-0" />
             <span>{renameError}</span>
+          </div>
+        ) : null}
+        {revealError ? (
+          <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-800">
+            <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+            <span>{revealError}</span>
           </div>
         ) : null}
       </CardContent>
@@ -223,6 +262,15 @@ function ModelCard({
             >
               <Download className="size-4" /> Download
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => reveal.mutate()}
+              disabled={reveal.isPending}
+              title={`Reveal ${model.name} in your file manager`}
+            >
+              <FolderOpen className="size-4" /> Reveal
+            </Button>
             {canRename ? (
               <Button
                 variant="ghost"
@@ -233,10 +281,134 @@ function ModelCard({
                 <PencilLine className="size-4" /> Rename
               </Button>
             ) : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setDeleteOpen(true)}
+              disabled={!canDelete}
+              title={
+                canDelete
+                  ? `Delete ${model.name}`
+                  : "Bundled models are read-only"
+              }
+              className={canDelete ? "text-red-700 hover:bg-red-50" : undefined}
+            >
+              <Trash2 className="size-4" /> Delete
+            </Button>
           </>
         )}
       </CardFooter>
+      {deleteOpen ? (
+        <DeleteModelModal
+          model={model}
+          onClose={() => setDeleteOpen(false)}
+          onDeleted={async () => {
+            setDeleteOpen(false);
+            await queryClient.invalidateQueries({ queryKey: ["models"] });
+          }}
+        />
+      ) : null}
     </Card>
+  );
+}
+
+function DeleteModelModal({
+  model,
+  onClose,
+  onDeleted,
+}: {
+  model: ModelInfo;
+  onClose: () => void;
+  onDeleted: () => void | Promise<void>;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  const remove = useMutation({
+    mutationFn: async () => deleteModel(model.name),
+    onSuccess: async () => {
+      setError(null);
+      await onDeleted();
+    },
+    onError: (err) => {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+          ? err.message
+          : "Delete failed",
+      );
+    },
+  });
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="delete-model-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !remove.isPending) onClose();
+      }}
+    >
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <div className="flex items-start gap-3">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-red-100 text-red-700">
+              <Trash2 className="size-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <CardTitle id="delete-model-title">Delete this model?</CardTitle>
+              <CardDescription>
+                <span className="font-mono text-ink">{model.name}</span> will be
+                permanently removed from disk. This can&apos;t be undone.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          <div className="rounded-md border border-surface-muted bg-surface-subtle px-3 py-2">
+            <span className="block text-xs uppercase tracking-wide text-ink-muted/70">
+              On disk
+            </span>
+            <code className="mt-1 block break-all font-mono text-xs text-ink-muted">
+              {model.path}
+            </code>
+          </div>
+          {error ? (
+            <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-800">
+              <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+              <span>{error}</span>
+            </div>
+          ) : null}
+        </CardContent>
+        <CardFooter className="flex justify-end gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={remove.isPending}
+            onClick={onClose}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            disabled={remove.isPending}
+            onClick={() => remove.mutate()}
+            className="bg-red-600 text-white hover:bg-red-700"
+          >
+            {remove.isPending ? (
+              <>
+                <Spinner /> Deleting…
+              </>
+            ) : (
+              <>
+                <Trash2 className="size-4" /> Delete
+              </>
+            )}
+          </Button>
+        </CardFooter>
+      </Card>
+    </div>
   );
 }
 

@@ -10,6 +10,10 @@ export interface ModelInfo {
   classes: Record<string, string>;
   params: number;
   size_mb: number;
+  // Absolute on-disk path to the `.pt` file. Surfaced for the
+  // "where this lives" affordance on each model card + the
+  // Reveal-in-Finder button.
+  path: string;
 }
 
 export interface ModelsListResponse {

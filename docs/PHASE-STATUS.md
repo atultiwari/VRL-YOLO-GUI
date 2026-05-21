@@ -1,7 +1,10 @@
 # Phase Status
 
-> Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones).
-> Updated at the end of each phase boundary. **Last edit: 2026-05-20 (P6.fix-1 — Run on Colab callout now visible on all hardware kinds, not just CPU).**
+> Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones)
+> plus the post-v0.9 Future-Features chain in
+> [`docs/FUTURE-FEATURES.md`](FUTURE-FEATURES.md). Updated at the end of
+> each phase boundary. **Last edit: 2026-05-21 (F1 — Models library:
+> delete + reveal on disk + path on every card).**
 >
 > **Known limitations and deferred work** live in
 > [`docs/CARRY-FORWARDS.md`](CARRY-FORWARDS.md) — full diagnoses + fix
@@ -36,12 +39,16 @@
 | **P6b — Desktop *Run on Colab* integration** | ✅ done | `v0.8.9-p6b-colab-desktop` | `6ca2f73` |
 | **P6c — Polish: reconnect-with-backoff + fetch retry + pilot plan** | ✅ done | `v0.9-p6-train-colab` | `46c4092` |
 | P6.fix-1 — Run on Colab callout visible on all hardware kinds | ✅ done | `v0.9.1` | `b2dbe46` |
-| P7 — Polish | ⏳ next | — | — |
+| **F1 — Models library: delete + reveal + path on every card** | ✅ done | `v0.10-f1-models-polish` | _SHA pending_ |
+| F2 — Training-run name + description | ⏳ next | — | — |
+| F3 — Persistent training history | ⏳ pending (depends F2) | — | — |
+| F4 — Dataset library: reuse + grouping | ⏳ pending (depends F3) | — | — |
+| P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at the P6 phase-completion commit (`v0.9-p6-train-colab`). **P6 complete:** Train on Colab is functionally done in code — companion notebooks (P6a), desktop integration (P6b), and resilience polish (P6c: reconnect-with-backoff, fetch retry, cancel-during-backoff, pilot test plan). Verified via 23/23 passing smoke tests. The real-world pilot test (`docs/PILOT-TEST.md`) hasn't been run yet — that's a clinician + dataset task, not a Claude task, and the gate for v1.0. **Next phase:** P7 — Polish (per PLAN.md §14).
+**Current head:** `main` at the F1 commit (`v0.10-f1-models-polish`). **F1 ships the first of the four post-v0.9 Future-Features items** from `docs/FUTURE-FEATURES.md` (planned in `docs/PLAN-F1.md`, signed off before any code landed). The remaining P-phases (P7 Polish, P8/P9 Packaging, P10 Pilot) are paused while the F-chain runs — user explicitly reordered before P7 starts. The real-world pilot test (`docs/PILOT-TEST.md`) hasn't been run yet — that's a clinician + dataset task, not a Claude task, and the gate for v1.0. **Next:** F2 — Training-run name + description.
 
 ---
 
@@ -588,18 +595,43 @@ In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runne
 
 **Carried-forward:** none. The earlier v0.8.5 / v0.8.6 binaries on existing installs will still show the wrong badge — there's no in-app remediation, the user has to reinstall from v0.8.7 onward to see the fix.
 
+### ✅ F1 — Models library: delete + reveal on disk + path on every card · `v0.10-f1-models-polish` · _SHA pending_
+
+**Trigger:** first of the four post-v0.9 Future-Features items from `docs/FUTURE-FEATURES.md`, planned in detail in `docs/PLAN-F1.md` and signed off (4 decisions: hard-delete, 403 for bundled, path shown on every card, reveal on every card) before any code landed. User explicitly reordered the F-chain to land before P7 (Polish).
+
+**Scope shipped:**
+
+| # | Subject | Outcome |
+|---|---|---|
+| F1.1 | `ModelRegistry.delete(name)` in `server/vrl_yolo/engine/registry.py` | New method mirroring `rename()`'s structure. KeyError if unknown; ValueError if `record.source == "bundled"`. `path.unlink()` with FileNotFoundError tolerated (race: someone deleted the .pt externally). Drops the entry from `defaults.json` if it was a per-task default (so `get_defaults()` falls back to any remaining model of the right task on the next read). Evicts the warm YOLO from the LRU. Re-scans. |
+| F1.2 | `DELETE /api/models/{name}` in `routers/models.py` | 204 on success; 404 for unknown; **403** for bundled-rejection (not 400 — communicates "exists but immutable" policy). |
+| F1.3 | `POST /api/models/{name}/reveal` in `routers/models.py` | Per-OS dispatch: Darwin `open -R <path>` (selects in Finder), Windows `explorer /select,<path>` (selects in Explorer — no space after comma), Linux `xdg-open <parent_dir>` (containing folder; xdg-open has no /select). `subprocess.run(check=False)` — a non-zero exit doesn't fail the request. 404 unknown / 410 gone (file vanished from disk between scan and click). Lives on the backend because the QtWebEngine renderer is sandboxed — it can't spawn `open` directly. |
+| F1.4 | `ModelInfo.path` field in `api/schemas.py` + `lib/types.ts` | Absolute on-disk path added to the Pydantic schema; `_record_to_info()` wires it; TS interface updated. Bundled, user, and trained checkpoints all carry it — consistent affordance. |
+| F1.5 | Models page UI (`apps/web/app/models/page.tsx`) | "On disk · `<abs path>`" row below Size, monospace + truncated with `title` for hover-full-path. Reveal icon button on every card. Delete icon button on user/trained cards; disabled with tooltip on bundled. Delete click opens an inline confirmation modal (no new dependency — built from existing Card + a fixed backdrop, same pattern as ConnectColabModal) that quotes file name + full path; on success invalidates the `["models"]` query so the card disappears without a page reload. Error path keeps the modal open with the `ApiError.message` inline so the user can read it + retry / cancel. |
+| F1.6 | `lib/api.ts` helpers | `deleteModel(name)` and `revealModel(name)`. Both use the existing `fetchJson` helper (already handles 204 No Content). |
+| F1.7 | Backend tests (`tests/test_models_api.py`) | First dedicated model-API test file. 12 tests: user delete removes file + record; bundled → 403 + file untouched; missing → 404; deleting current default clears defaults.json + get_defaults falls back; tolerates file already missing; path field on list + single; reveal dispatches `open -R` on Darwin / `/select,` on Windows / `xdg-open` on Linux; reveal 404 unknown / 410 missing — neither calls subprocess. Synthetic `_inspect` so the suite runs in <1 s without the `ml` extra or any real `.pt` content. All 12 pass. The 23 prior Colab smoke tests are still green — schema change didn't break anything. |
+| F1.8 | Verification against the running binary | Booted the desktop app with `VRL_YOLO_GUI_TEST_AUTO_QUIT_S=20` and curled all three new contracts against the live FastAPI: `GET /api/models` returns the `path` field on every record; `DELETE /api/models/yolo26n.pt` → 403 with the bundled-rejection detail; `DELETE /api/models/never-existed.pt` → 404; `POST /api/models/never-existed.pt/reveal` → 404. App starts and shuts down cleanly with the new code. |
+
+**Carried-forward:**
+- Delete is unguarded against in-flight inference / training jobs. If you delete a model mid-inference, the YOLO instance the request captured stays alive but its path is now a dead pointer; the inference completes, the next request fails to load (file missing), the user sees a clear error. No data loss; not blocking pilot. Worth a follow-up if pilot users hit it.
+- Hard-delete only — no soft-delete / Trash / Undo. macOS Finder Trash is the system-level safety net since `models/` lives under `~/Library/Application Support/`. Revisit if pilot users repeatedly ask "I deleted the wrong one, can I recover it?"
+- No "warn if a saved prediction report references this model" guard on the delete confirmation (acceptance criterion in `docs/FUTURE-FEATURES.md` item 1). Requires F3's persistent training-history to be meaningful. Plain confirmation modal for now; cross-reference lands in F3.
+- The `settings.mode === "desktop"` gate on Reveal (originally in FUTURE-FEATURES.md) isn't applied — that setting doesn't exist, and this project is always-desktop. If a web build ever ships, this becomes a real gate.
+
 ---
 
-## Up next: P6 — Train on Colab
+## Up next: F2 — Training-run name + description
 
-**Estimated 1.5 weeks** per PLAN.md §14. Scope:
+**Estimated ½ day** per `docs/FUTURE-FEATURES.md` item 2. Smallest of the F-chain; foundation for F3.
 
-- New `engine/colab.py` — Cloudflare-tunnel client + Drive sync, modelled on the `yolo-gui` reference project.
-- `/train/configure` gains a "Run on Colab" toggle when no local accelerator is detected (instead of letting the user kick off an overnight CPU run by accident).
-- Companion notebooks under `notebooks/` (detect + classify pairs) train on the user's own Drive, mount Cloudflare tunnel, hand the live metric stream back to the desktop app over the existing WebSocket protocol so `/train/run` works unchanged.
-- Save-to-library pulls `best.pt` from Drive into `<storage_root>/models/<task>/`.
+- Optional **Name** and **Description** fields on `/train/configure`. Name defaults auto-generated (`<Task> · <dataset-id-stub> · YYYY-MM-DD HH:MM` or similar — open decision in the F2 plan).
+- `TrainingJob` dataclass + `JobManager.start()` accept `name` + `description`; both surfaced in `snapshot()`.
+- Save-to-library uses the slugified name when present, falling back to `trained-<job_id[:8]>.pt` when empty. Suffix with `-<job_id[:8]>` on name collisions.
+- `PATCH /api/training/jobs/{id}` to edit post-hoc — live editing while the run is in flight; later edits flow to F3's history record.
 
-**Phase tag at completion:** `v0.9-p6-train-colab`.
+**Open decisions for F2 sign-off** (before code): default-name format, slug strategy (`_slugify` helper rolled here vs adding python-slugify dep).
+
+**Phase tag at completion:** `v0.11-f2-run-naming`.
 
 ---
 

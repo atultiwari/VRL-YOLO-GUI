@@ -17,6 +17,11 @@ class ModelInfo(BaseModel):
     classes: dict[int, str]
     params: int
     size_mb: float
+    # Absolute on-disk path to the `.pt` file. Surfaced so the frontend
+    # can show "where this lives" and offer Reveal-in-Finder. Always
+    # populated (bundled models live under the install tree, others
+    # under <storage_root>/models/).
+    path: str
 
 
 class ModelsListResponse(BaseModel):

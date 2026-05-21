@@ -184,6 +184,27 @@ export function modelDownloadUrl(name: string): string {
   return `${API_BASE}/models/${encodeURIComponent(name)}/download`;
 }
 
+/**
+ * Hard-delete a user-imported or trained checkpoint. Bundled weights
+ * are rejected by the backend with 403.
+ */
+export async function deleteModel(name: string): Promise<void> {
+  await fetchJson(`${API_BASE}/models/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+}
+
+/**
+ * Open the OS file manager scoped to this model's `.pt`. Lives on the
+ * backend because the QtWebEngine renderer is sandboxed — it can't
+ * spawn `open` / `explorer` / `xdg-open` directly.
+ */
+export async function revealModel(name: string): Promise<void> {
+  await fetchJson(`${API_BASE}/models/${encodeURIComponent(name)}/reveal`, {
+    method: "POST",
+  });
+}
+
 // --- Train wizard ------------------------------------------------------
 
 export async function fetchHardware(

@@ -41,13 +41,35 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.10.0",
+    phase: "F1",
+    title: "Models library: delete + reveal on disk + path on every card",
+    tag: "v0.10-f1-models-polish",
+    commit: "PENDING",
+    date: "2026-05-21",
+    status: "current",
+    features: [
+      "**Delete user-imported or locally-trained checkpoints from the library.** `DELETE /api/models/{name}` route + `ModelRegistry.delete(name)`. Hard-delete (macOS Finder Trash is the system safety net; `models/` lives under `~/Library/Application Support/`). Bundled weights are rejected with **HTTP 403** ('read-only — they live in the install tree and `scripts/fetch-models.py` would re-fetch them anyway') rather than 400, so the frontend can distinguish policy-rejected from malformed. Deleting a model that's the per-task default drops its entry from `defaults.json` and `get_defaults()` falls back to any remaining model of the right task on the next read.",
+      "**Reveal a checkpoint in the OS file manager.** `POST /api/models/{name}/reveal`. Lives on the backend because the QtWebEngine renderer is sandboxed — it can't spawn `open` / `explorer` / `xdg-open`. Per-OS dispatch: macOS `open -R '<path>'` (selects in Finder), Windows `explorer /select,<path>` (selects in Explorer — no space after the comma), Linux `xdg-open <parent_dir>` (containing folder, since xdg-open has no /select equivalent). `subprocess.run(check=False)` so a non-zero file-manager exit doesn't fail the request.",
+      "**`path` field on every `ModelInfo` response.** Absolute on-disk path surfaced via the API for the first time. Bundled, user-imported, and trained-locally checkpoints all carry it.",
+      "**Path row + Reveal + Delete buttons on every model card.** 'On disk · `<abs path>`' rendered in monospace, truncated with `title` for hover. Reveal button on every card (bundled too — consistent affordance). Delete button on user/trained cards; bundled cards show the button disabled with a tooltip 'Bundled models are read-only'. Delete click opens a confirmation modal that quotes the file name + full path; on success invalidates the `['models']` query so the card disappears without a page reload.",
+      "**Eight new backend tests in `tests/test_models_api.py`** (first dedicated model-API test file): user delete removes file + record; bundled delete → 403 + file untouched; missing name → 404; deleting the current default clears it from defaults.json; deleting tolerates the file already being missing; path field present on list + single responses; reveal dispatches the right command per-OS; reveal returns 404/410 without ever calling subprocess on the failure paths. Synthetic `_inspect` so the suite runs in <1 s without the `ml` extra.",
+    ],
+    fixes: [],
+    knownLimitations: [
+      "Delete is unguarded against in-flight inference / training jobs. If you delete a model mid-inference, the YOLO instance the request captured stays alive but its path is now a dead pointer; the inference completes, the next request fails to load (file missing), the user sees a clear error. Tracked as an F1 carry-forward.",
+      "Soft-delete / Trash / Undo is not implemented — hard-delete only. macOS Finder Trash is the safety net; revisit if pilot users repeatedly ask 'I deleted the wrong one, can I recover it?'",
+      "No 'warn if a saved prediction report references this model' guard in the delete confirmation (the FUTURE-FEATURES.md acceptance criterion). That guard requires the persistent training-history layer from F3 to be meaningful. Plain confirmation modal for now; cross-reference lands in F3.",
+    ],
+  },
+  {
     version: "0.9.1",
     phase: "P6.fix-1",
     title: "Run on Colab callout now visible on all hardware (was MPS/CUDA-hidden)",
     tag: "v0.9.1",
     commit: "b2dbe46",
     date: "2026-05-20",
-    status: "current",
+    status: "shipped",
     features: [],
     fixes: [
       "**Run on Colab callout is now visible on every hardware kind, not just CPU.** The callout was gated by `hardware?.kind === \"cpu\"` since P6b, which meant clinicians on MacBooks (MPS) or Linux/Windows machines with NVIDIA GPUs (CUDA) couldn't see the *Run on Colab* button at all — the entire Colab feature was unreachable from the UI on those machines. Caught by the user testing on an MPS MacBook. The callout now adapts its copy to the detected hardware: **CPU** keeps the loud warning (\"This machine has no GPU — local training will be slow\"), **MPS** softens to \"Want a faster GPU? Train on a free Colab T4 instead — often faster than Apple Silicon MPS for YOLO training\", **CUDA** quietest (\"Train on a free Google Colab GPU instead. Useful if you'd rather not pin this machine's GPU during training\"). One callout component, three copy variants picked from a switch on `hardware.kind`.",
