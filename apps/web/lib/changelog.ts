@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "F4",
     title: "Dataset library — naming + library tab + /datasets page + history cross-reference",
     tag: "v0.14-f4-dataset-library",
-    commit: "PENDING",
+    commit: "08e0828",
     date: "2026-05-21",
     status: "current",
     features: [

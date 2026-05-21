@@ -44,7 +44,7 @@
 | **F2 — Training-run name + description + app-wide TZ setting** | ✅ done | `v0.11-f2-run-naming` | `fd429fc` |
 | **F3 — Persistent training history (SQLite + /train/history)** | ✅ done | `v0.12-f3-history` | `9ca25b5` |
 | **F5 — Auto-save trained models + macOS first-launch helper in .dmg** | ✅ done | `v0.13-f5-autosave` | `d64b8dd` |
-| **F4 — Dataset library: naming + library tab + /datasets page + history cross-reference** | ✅ done | `v0.14-f4-dataset-library` | _SHA pending_ |
+| **F4 — Dataset library: naming + library tab + /datasets page + history cross-reference** | ✅ done | `v0.14-f4-dataset-library` | `08e0828` |
 | **P7 — Polish** | ⏳ next | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |
@@ -721,7 +721,7 @@ In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runne
 
 ---
 
-### ✅ F4 — Dataset library: naming + library tab + /datasets page + history cross-reference · `v0.14-f4-dataset-library` · _SHA pending_
+### ✅ F4 — Dataset library: naming + library tab + /datasets page + history cross-reference · `v0.14-f4-dataset-library` · `08e0828`
 
 **Trigger:** last item in the post-v0.9 Future-Features chain, planned in `docs/PLAN-F4.md` with 6 decisions signed off in one round: (1) **pull dataset naming + description into F4** via a new SQLite `datasets` table + schema v2 migration; (2) **standalone `/datasets` page in sidebar** + a library tab on `/train/dataset` (both render the same component); (3) soft-mention library checkpoints in the delete modal; (4) sort default = most-recently-used with a dropdown for the other modes; (5) partial datasets render in a separate "Couldn't read" section below the main table; (6) partial datasets remain deletable so users can reclaim orphan disk space. Inline rename pencil on every library row was added mid-implementation after the first spot-check showed 45 backfilled `"Dataset <stub>"` rows would otherwise require 45 detail-page round-trips to rename.
 
