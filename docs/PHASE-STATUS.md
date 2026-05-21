@@ -42,7 +42,7 @@
 | **F1 — Models library: delete + reveal + path on every card** | ✅ done | `v0.10-f1-models-polish` | `788dee3` |
 | **F2 — Training-run name + description + app-wide TZ setting** | ✅ done | `v0.11-f2-run-naming` | `fd429fc` |
 | **F3 — Persistent training history (SQLite + /train/history)** | ✅ done | `v0.12-f3-history` | `9ca25b5` |
-| **F5 — Auto-save trained models + macOS first-launch helper in .dmg** | ✅ done | `v0.13-f5-autosave` | _SHA pending_ |
+| **F5 — Auto-save trained models + macOS first-launch helper in .dmg** | ✅ done | `v0.13-f5-autosave` | `d64b8dd` |
 | F4 — Dataset library: reuse + grouping | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
@@ -692,7 +692,7 @@ In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runne
 
 ---
 
-### ✅ F5 — Auto-save trained models + macOS first-launch helper in .dmg · `v0.13-f5-autosave` · _SHA pending_
+### ✅ F5 — Auto-save trained models + macOS first-launch helper in .dmg · `v0.13-f5-autosave` · `d64b8dd`
 
 **Trigger:** fourth of the post-v0.9 Future-Features items, user reordered to ship F5 before F4 since the F3 history record makes F5's UX immediately meaningful (the user can see which runs got auto-saved in the table). All FUTURE-FEATURES.md §5 decisions were already signed off (default ON, new Train section, no auto-set-as-default, ship after F3); no separate PLAN-F5.md was drafted since the implementation was small + the decisions clear. The DMG packaging fix was added mid-commit after the user hit a Gatekeeper-rejection on the v0.12.0 release.
 

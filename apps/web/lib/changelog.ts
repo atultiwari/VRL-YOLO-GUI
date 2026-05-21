@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "F5",
     title: "Auto-save trained models + macOS first-launch helper in .dmg",
     tag: "v0.13-f5-autosave",
-    commit: "PENDING",
+    commit: "d64b8dd",
     date: "2026-05-21",
     status: "current",
     features: [
