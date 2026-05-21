@@ -46,7 +46,7 @@
 | **F3 — Persistent training history (SQLite + /train/history)** | ✅ done | `v0.12-f3-history` | `9ca25b5` |
 | **F5 — Auto-save trained models + macOS first-launch helper in .dmg** | ✅ done | `v0.13-f5-autosave` | `d64b8dd` |
 | **F4 — Dataset library: naming + library tab + /datasets page + history cross-reference** | ✅ done | `v0.14-f4-dataset-library` | `08e0828` |
-| F4.fix-1 — macOS .dmg build fix (dangling-symlink sweep + `symlinks=True` on copytree) | ✅ done | `v0.14.1` | `TBD` |
+| F4.fix-1 — macOS .dmg build fix (dangling-symlink sweep + `symlinks=True` on copytree) | ✅ done | `v0.14.1` | `1a5fb1f` |
 | **P7 — Polish** | ⏳ next | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |

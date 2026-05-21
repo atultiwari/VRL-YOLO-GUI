@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "F4.fix-1",
     title: "macOS .dmg build fix — dangling-symlink sweep + symlinks=True on copytree",
     tag: "v0.14.1",
-    commit: "TBD",
+    commit: "1a5fb1f",
     date: "2026-05-21",
     status: "current",
     features: [],
