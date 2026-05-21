@@ -346,11 +346,12 @@ class ColabConnectResponse(BaseModel):
 
 
 class UpdateTrainingMetadataRequest(BaseModel):
-    """Body for `PATCH /api/training/{job_id}` — F2.
+    """Body for `PATCH /api/training/{job_id}` — F2, un-gated in F3.
 
-    Edit a run's name + description while it's in flight. Gated
-    server-side to ``status in {queued, running}``; completed /
-    failed / cancelled runs return 409 (history edits land in F3).
+    Edits a run's name + description. F2 gated this to queued/running
+    runs and returned 409 on terminal states. F3 unlocks completed
+    runs by routing the edit through the persistent history layer —
+    both running and completed runs accept edits now.
 
     Field semantics:
     - ``None`` (either field) means "don't touch this field." Pass
@@ -363,3 +364,71 @@ class UpdateTrainingMetadataRequest(BaseModel):
 
     name: str | None = Field(None, max_length=200)
     description: str | None = Field(None, max_length=2000)
+
+
+# --- F3: training history ----------------------------------------------------
+
+
+class TrainingHistoryRow(BaseModel):
+    """One row in the persistent training-history table (F3)."""
+
+    id: str
+    name: str
+    description: str
+    task: Task
+    dataset_id: str
+    dataset_missing: bool
+    base_model: str
+    epochs_total: int
+    epoch_current: int
+    imgsz: int
+    batch: int
+    accelerator_kind: Literal["cuda", "mps", "cpu", "colab"]
+    device_arg: str | None = None
+    started_at: str
+    finished_at: str | None = None
+    duration_s: float | None = None
+    status: TrainingStatus
+    error_message: str | None = None
+    best_pt_path: str | None = None
+    library_path: str | None = None
+    final_metrics: TrainingMetrics = Field(default_factory=TrainingMetrics)
+    dataset_snapshot: dict | None = None
+
+
+class TrainingHistoryListResponse(BaseModel):
+    rows: list[TrainingHistoryRow]
+    total: int
+    limit: int
+    offset: int
+
+
+class TrainingHistoryDetailResponse(BaseModel):
+    row: TrainingHistoryRow
+    # NDJSON stream URL — caller fetches separately to keep this
+    # response payload small.
+    events_url: str
+
+
+class PurgeHistoryResponse(BaseModel):
+    deleted_count: int
+    deleted_ids: list[str]
+
+
+class RerunHistoryResponse(BaseModel):
+    """Prefill payload for the /train/configure wizard.
+
+    Mirrors `StartTrainingRequest` but with the additional context the
+    wizard needs to recreate the screen state (the dataset stub the
+    row used, whether that dataset still exists, etc.).
+    """
+
+    dataset_id: str
+    dataset_missing: bool
+    model: str
+    task: Task
+    epochs: int
+    imgsz: int
+    batch: int
+    name: str
+    description: str

@@ -41,13 +41,41 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.12.0",
+    phase: "F3",
+    title: "Persistent training history — SQLite + /train/history + edit-lock removed",
+    tag: "v0.12-f3-history",
+    commit: "PENDING",
+    date: "2026-05-21",
+    status: "current",
+    features: [
+      "**Persistent training-run history.** Every run (local + Colab) writes to SQLite at `<storage_root>/training.db` from the moment training starts. The `training_runs` table carries the full lifecycle context — name + description (F2), task, dataset_id + snapshot, base_model, hyperparams, accelerator, started_at, finished_at, status, epoch_current, error_message, best_pt_path, library_path, final_metrics — and updates on every terminal event + after save_to_library succeeds. Schema is hand-rolled (`schema_version` int + ordered migrations); F3 ships v1. Fresh installs migrate v0→v1 transparently.",
+      "**`/train/history` page** — sortable + filterable table of every run ever. Filter chips: Task / Status / Dataset. Sort: Most recent / Name (A→Z) / Duration. Empty state suggests starting a run. Rows whose dataset folder has been deleted show greyed + line-through with a tooltip; Re-run disabled. Manual 'Clean up runs older than 30 days' button.",
+      "**`/train/history/view?id=<job_id>` detail page** — replays the run's complete event stream from `events.jsonl(.gz)` into the same recharts components `/train/run` uses. Header shows name + description with inline edits (the F2 edit-lock is gone!), Started / Finished / Elapsed timestamps, status badge, hyperparams + final metrics cards, error message if the run failed. Re-run / Save to library / Delete actions.",
+      "**6 new history routes**: `GET /history` (paginated + filtered list), `GET /history/{id}` (detail row), `GET /history/{id}/events` (NDJSON stream for chart replay), `DELETE /history/{id}?delete_checkpoint=…` (row + optional checkpoint), `POST /history/{id}/rerun` (StartTrainingBody prefill payload), `POST /history/purge?older_than_days=N` (bulk cleanup). Declared *before* the `/{job_id}` routes so the `/history` literals beat the path-parameter match.",
+      "**F2's PATCH edit-lock is removed.** `PATCH /api/training/{id}` now accepts edits on completed/failed/cancelled runs by routing through `HistoryDb.update_metadata` (was: 409 Conflict). Live runs still update in-memory state; the same edit mirrors to history. `/train/run`'s 'Editing locked after the run finishes' hint is gone — the pencils stay live the whole time.",
+      "**Per-run `events.jsonl(.gz)` sidecar.** New `engine/event_log.py` writes line-buffered JSONL during the run, gzips in a daemon thread the moment status hits terminal (5–10× disk savings on a 200-epoch run). Reader auto-picks `.gz` over `.jsonl`. All disk errors caught + logged so a glitch can't take down training.",
+      "**F3 §9 auto-purge setting.** New `auto_purge_old_runs: boolean` toggle in a new **Train** section of `/settings` (default **OFF**). When ON, `/train/history` calls purge on mount and shows a small toast. Library checkpoints stay in `/models` — only history rows + replay events are removed. F5 (coming in v0.13) adds its auto-save toggle to this same Train section.",
+      "**Sidebar entry: 'Training history'** under the Train section. Re-run from any row prefills the wizard at `/train/configure?from=<history_id>`; the configure page fetches the rerun payload + dataset and applies them to the train store.",
+      "**32 new backend tests** in `tests/test_history.py` covering migrations, HistoryDb writer/reader semantics, EventLog round-trips (compressed + uncompressed), JobManager integration, all 6 new routes end-to-end. 89 total backend tests across the project, all green.",
+    ],
+    fixes: [],
+    knownLimitations: [
+      "History DB grows unbounded by default. Auto-purge is OFF by default and capped at 30 days when ON. Pilot users who don't enable it accumulate rows + sidecars indefinitely (typical compressed run ~500 KB).",
+      "Re-run from a Colab row prefills the local-training wizard (per PLAN-F3 decision 6). The user opens the Colab modal again from /train/configure if they want a fresh Colab session.",
+      "No bulk-select / bulk-delete in the history table — Delete is one row at a time.",
+      "The detail page doesn't show free-form stdout log lines — only the structured event chart-replay. Future work.",
+      "The two _record_to_info() helpers in routers/models.py + routers/training.py are still duplicated, carrying forward from F2.",
+    ],
+  },
+  {
     version: "0.11.0",
     phase: "F2",
     title: "Training-run name + description + app-wide timezone setting",
     tag: "v0.11-f2-run-naming",
     commit: "fd429fc",
     date: "2026-05-21",
-    status: "current",
+    status: "shipped",
     features: [
       "**Optional Name + Description on every training run.** New 'Name this run' card on `/train/configure` sits above the Model & preset card. Name is a single-line input (max 200 chars) with a **live placeholder** showing the auto-generated default — `<Task> · <dataset-stub> · YYYY-MM-DD HH:MM` in the user's preferred TZ — that rebuilds when task or dataset change (and ticks forward every 60 s so the timestamp stays current). Description is a multi-line textarea (max 2000 chars). Both flow through to `POST /api/training/start` and `POST /api/training/colab/connect`; backend `JobManager.start()` + `start_colab_job()` accept `name` + `description` kwargs and fall back to `_default_run_name()` when empty.",
       "**Inline name + description editing on `/train/run`** while the run is in flight. Run name replaces statusLabel as the page's h1. Pencil icon next to the name → inline input → Enter or Save commits via `PATCH /api/training/{id}`. Description shows below the name as italic text; a separate pencil opens a popover modal with a textarea. Both edit affordances disappear once `status` is terminal, replaced with a grey hint pointing at F3 for completed-run history edits.",

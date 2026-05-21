@@ -6,10 +6,16 @@ import type {
   ModelInfo,
   ModelsListResponse,
   PresetsListResponse,
+  PurgeHistoryResponse,
   ReportRequestBody,
+  RerunHistoryResponse,
   StartTrainingBody,
   Task,
+  TrainingEvent,
+  TrainingHistoryDetailResponse,
+  TrainingHistoryListResponse,
   TrainingJobInfo,
+  TrainingStatus,
 } from "./types";
 
 const API_BASE =
@@ -456,4 +462,100 @@ export function trainingStreamUrl(jobId: string): string {
       : "";
   const wsBase = origin.replace(/^http/, "ws");
   return `${wsBase}/api/training/${encodeURIComponent(jobId)}/stream`;
+}
+
+// --- F3: training history ---------------------------------------------------
+
+export interface ListHistoryArgs {
+  task?: Task;
+  status?: TrainingStatus;
+  dataset_id?: string;
+  limit?: number;
+  offset?: number;
+  sort_by?: "started_at" | "name" | "duration";
+  sort_dir?: "asc" | "desc";
+}
+
+export async function listTrainingHistory(
+  args: ListHistoryArgs = {},
+): Promise<TrainingHistoryListResponse> {
+  const params = new URLSearchParams();
+  if (args.task) params.set("task", args.task);
+  if (args.status) params.set("status", args.status);
+  if (args.dataset_id) params.set("dataset_id", args.dataset_id);
+  if (args.limit !== undefined) params.set("limit", String(args.limit));
+  if (args.offset !== undefined) params.set("offset", String(args.offset));
+  if (args.sort_by) params.set("sort_by", args.sort_by);
+  if (args.sort_dir) params.set("sort_dir", args.sort_dir);
+  const qs = params.toString();
+  return fetchJson(
+    `${API_BASE}/training/history${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export async function getTrainingHistoryRow(
+  jobId: string,
+): Promise<TrainingHistoryDetailResponse> {
+  return fetchJson(
+    `${API_BASE}/training/history/${encodeURIComponent(jobId)}`,
+  );
+}
+
+/**
+ * Stream the run's NDJSON event log into an array. The endpoint is
+ * `application/x-ndjson`; we parse line-by-line so a partial response
+ * still yields the events that arrived.
+ */
+export async function fetchTrainingHistoryEvents(
+  jobId: string,
+): Promise<TrainingEvent[]> {
+  const resp = await fetch(
+    `${API_BASE}/training/history/${encodeURIComponent(jobId)}/events`,
+  );
+  if (!resp.ok) {
+    throw new ApiError(resp.status, await resp.text());
+  }
+  const text = await resp.text();
+  const events: TrainingEvent[] = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      events.push(JSON.parse(trimmed) as TrainingEvent);
+    } catch {
+      // Skip malformed lines — keeps the chart render best-effort.
+    }
+  }
+  return events;
+}
+
+export async function deleteTrainingHistoryRow(
+  jobId: string,
+  opts: { deleteCheckpoint?: boolean } = {},
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (opts.deleteCheckpoint) params.set("delete_checkpoint", "true");
+  const qs = params.toString();
+  await fetchJson(
+    `${API_BASE}/training/history/${encodeURIComponent(jobId)}${qs ? `?${qs}` : ""}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function rerunTrainingHistoryRow(
+  jobId: string,
+): Promise<RerunHistoryResponse> {
+  return fetchJson(
+    `${API_BASE}/training/history/${encodeURIComponent(jobId)}/rerun`,
+    { method: "POST" },
+  );
+}
+
+export async function purgeTrainingHistory(
+  olderThanDays: number,
+): Promise<PurgeHistoryResponse> {
+  return fetchJson(
+    `${API_BASE}/training/history/purge?older_than_days=${olderThanDays}`,
+    { method: "POST" },
+  );
 }

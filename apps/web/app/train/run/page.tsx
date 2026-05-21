@@ -396,7 +396,12 @@ export default function TrainRunPage() {
 
   const statusBadge = STATUS_TONE[status];
 
-  const editingLocked = isTerminal;
+  // F3: completed-run edits now route through HistoryDb, so the F2
+  // lock is gone. We keep the variable for now as `false` rather than
+  // ripping out the gated render branches — the lock-state hint at
+  // L553 is removed but the conditional rendering branches still use
+  // it, and leaving the flag here keeps the diff focused.
+  const editingLocked = false;
   const elapsedSeconds = snapshot
     ? Math.max(
         0,
@@ -550,12 +555,9 @@ export default function TrainRunPage() {
               "Connecting to training job…"
             )}
           </p>
-          {editingLocked && snapshot ? (
-            <p className="mt-1 text-xs text-ink-muted/70">
-              Editing locked after the run finishes (re-enabled when history
-              persistence lands in F3).
-            </p>
-          ) : null}
+          {/* F3 removed the F2 edit-lock hint — completed runs are
+             now editable via HistoryDb, so the pencils above stay
+             available the whole time. */}
           {editError ? (
             <div className="mt-2 flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-800">
               <AlertTriangle className="size-3" />

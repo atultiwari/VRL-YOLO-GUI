@@ -14,8 +14,8 @@ import {
   SlidersHorizontal,
   Zap,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { ClassNamesEditor } from "@/components/train/class-names-editor";
 import { ConnectColabModal } from "@/components/train/connect-colab-modal";
@@ -36,6 +36,7 @@ import {
   fetchDataset,
   fetchHardware,
   fetchModels,
+  rerunTrainingHistoryRow,
   startTraining,
 } from "@/lib/api";
 import { usePreferredTimezone } from "@/lib/format-date";
@@ -76,11 +77,30 @@ const PRESET_CHOICES: { value: TrainPreset; label: string; description: string }
 ];
 
 export default function TrainConfigurePage() {
+  // useSearchParams requires a Suspense boundary in Next.js static
+  // export mode (the ?from=<history_id> prefill path was added in F3).
+  return (
+    <Suspense
+      fallback={
+        <section className="flex h-full items-center justify-center p-12">
+          <Spinner /> Loading…
+        </section>
+      }
+    >
+      <_ConfigureInner />
+    </Suspense>
+  );
+}
+
+function _ConfigureInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromHistoryId = searchParams.get("from");
   const {
     selectedTask,
     dataset,
     hyperparams,
+    setTask,
     setDataset,
     patchHyperparams,
     applyPreset,
@@ -88,10 +108,56 @@ export default function TrainConfigurePage() {
   } = useTrainStore();
   const [startError, setStartError] = useState<string | null>(null);
   const [colabModalOpen, setColabModalOpen] = useState(false);
+  const [prefillNotice, setPrefillNotice] = useState<string | null>(null);
   // F2: run metadata. Empty `name` = "use the placeholder" (defaultRunName).
   // Empty `description` = "no description set" (server clears).
   const [runName, setRunName] = useState("");
   const [runDescription, setRunDescription] = useState("");
+
+  // F3: Re-run prefill. When the user clicks Re-run on
+  // /train/history?, we navigate here with `?from=<history_id>`.
+  // Fetch the prefill payload + the dataset, then write through to
+  // the train store + local state so the wizard lands on the same
+  // settings the original run used.
+  const prefillFired = useRef(false);
+  useEffect(() => {
+    if (!fromHistoryId || prefillFired.current) return;
+    prefillFired.current = true;
+    (async () => {
+      try {
+        const prefill = await rerunTrainingHistoryRow(fromHistoryId);
+        if (prefill.dataset_missing) {
+          setPrefillNotice(
+            `Re-run requires dataset ${prefill.dataset_id.slice(0, 12)}, which has been deleted. Re-upload it from /train.`,
+          );
+          router.replace("/train");
+          return;
+        }
+        const ds = await fetchDataset(prefill.dataset_id);
+        setTask(prefill.task);
+        setDataset(ds);
+        patchHyperparams({
+          model: prefill.model,
+          epochs: prefill.epochs,
+          image_size: prefill.imgsz,
+          batch_size: prefill.batch,
+        });
+        setRunName(prefill.name);
+        setRunDescription(prefill.description);
+        setPrefillNotice(
+          `Prefilled from run "${prefill.name}". Tweak any field before clicking Start.`,
+        );
+      } catch (err) {
+        setPrefillNotice(
+          err instanceof ApiError
+            ? `Couldn't load run for re-run: ${err.message}`
+            : "Couldn't load run for re-run.",
+        );
+      }
+    })();
+    // setTask/setDataset/patchHyperparams are zustand selectors — stable refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromHistoryId]);
 
   // Live placeholder: rebuild every minute so the auto-generated
   // <Task> · <stub> · YYYY-MM-DD HH:MM stays current. Also subscribes
@@ -107,13 +173,17 @@ export default function TrainConfigurePage() {
   // If we got here without a dataset (e.g. fresh tab, store hydrated but
   // dataset was cleared by a "Reset desktop storage"), redirect back.
   // The store's persist middleware kicks in on mount, so wait a tick.
+  // EXCEPT: when ?from=<history_id> is set, the F3 prefill effect above
+  // will populate state shortly; don't bounce mid-prefill.
   useEffect(() => {
+    if (fromHistoryId && !prefillFired.current) return;
+    if (fromHistoryId && (!selectedTask || !dataset)) return;
     if (!selectedTask) {
       router.replace("/train");
     } else if (!dataset) {
       router.replace("/train/dataset");
     }
-  }, [selectedTask, dataset, router]);
+  }, [selectedTask, dataset, router, fromHistoryId]);
 
   // Re-fetch the dataset from disk on mount so the user can see if the
   // backend has the dataset they think they have. If the backend says
@@ -234,6 +304,12 @@ export default function TrainConfigurePage() {
           <ArrowLeft className="size-4" /> Change dataset
         </Button>
       </header>
+
+      {prefillNotice ? (
+        <div className="rounded-md border border-accent/40 bg-accent-subtle px-3 py-2 text-sm text-ink">
+          {prefillNotice}
+        </div>
+      ) : null}
 
       <DatasetSummary dataset={dataset} />
 

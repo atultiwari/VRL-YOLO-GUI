@@ -43,11 +43,20 @@ export interface AppSettings {
    * also reads it so the default name reflects the user's wall clock.
    */
   timezone: string;
+
+  /**
+   * F3: auto-purge training history rows older than 30 days when
+   * `/train/history` mounts. Default OFF — opt-in only since deletion
+   * is irreversible. Library checkpoints under models/<task>/ are NOT
+   * affected (they're separate user artifacts cleaned via /models).
+   */
+  auto_purge_old_runs: boolean;
 }
 
 const DEFAULTS: AppSettings = {
   show_presets: false,
   timezone: "system",
+  auto_purge_old_runs: false,
 };
 
 const STORAGE_KEY = "vrl-yolo-gui.settings.v1";

@@ -223,6 +223,62 @@ export interface StartTrainingBody {
   description?: string;
 }
 
+// F3: persistent training history.
+
+export interface TrainingHistoryRow {
+  id: string;
+  name: string;
+  description: string;
+  task: Task;
+  dataset_id: string;
+  dataset_missing: boolean;
+  base_model: string;
+  epochs_total: number;
+  epoch_current: number;
+  imgsz: number;
+  batch: number;
+  accelerator_kind: "cuda" | "mps" | "cpu" | "colab";
+  device_arg: string | null;
+  started_at: string;
+  finished_at: string | null;
+  duration_s: number | null;
+  status: TrainingStatus;
+  error_message: string | null;
+  best_pt_path: string | null;
+  library_path: string | null;
+  final_metrics: TrainingMetrics;
+  dataset_snapshot: Record<string, unknown> | null;
+}
+
+export interface TrainingHistoryListResponse {
+  rows: TrainingHistoryRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface TrainingHistoryDetailResponse {
+  row: TrainingHistoryRow;
+  events_url: string;
+}
+
+export interface PurgeHistoryResponse {
+  deleted_count: number;
+  deleted_ids: string[];
+}
+
+export interface RerunHistoryResponse {
+  dataset_id: string;
+  dataset_missing: boolean;
+  model: string;
+  task: Task;
+  epochs: number;
+  imgsz: number;
+  batch: number;
+  name: string;
+  description: string;
+}
+
 // Events shipped over /api/training/{id}/stream. Frontend reduces these
 // into a TrainingJobInfo snapshot + scrolling log + Recharts series.
 export type TrainingEvent =

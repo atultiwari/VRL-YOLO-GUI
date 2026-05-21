@@ -14,14 +14,20 @@
 
 | # | Feature | Depends on | Rough complexity |
 |---|---|---|---|
-| 1 | Models library: delete + reveal on disk | — | Small (1–2 days) |
-| 2 | Training-run name + description | — | Small (½ day) |
+| 1 | Models library: delete + reveal on disk | — | Small (1–2 days) ✅ shipped v0.10.0 |
+| 2 | Training-run name + description | — | Small (½–1 day) ✅ shipped v0.11.0 |
 | 3 | Persistent training history | #2 | Medium (3–5 days) |
 | 4 | Dataset library: reuse + grouping by dataset | #3 | Medium (3–5 days) |
+| 5 | Auto-save trained models to library (Settings toggle, default ON) | #3 (full benefit) | Small (½ day) |
 
 Logical order if all four ship: **#1 (independent) · #2 → #3 → #4**.
 The training-workflow chain (#2 → #4) is one connected feature set —
-each layer adds to the same data model and UI surface.
+each layer adds to the same data model and UI surface. **#5 is
+independent in code** (~½ day frontend-only) but reads naturally
+*after* #3 ships, since the auto-save path benefits from being able
+to surface the saved checkpoint in the history record. We can ship
+#5 between #3 and #4, or alongside #3 if the user wants the
+behaviour-change rolled in earlier.
 
 ---
 
@@ -332,6 +338,154 @@ mental model clear in the UI ("library" vs "drop new").
 
 ---
 
+## 5. Auto-save trained models to library
+
+### What
+
+A new Settings toggle: **"Auto-save trained models to library"** (default
+**ON**). When ON, the moment a training run hits `status === "completed"`,
+the desktop kicks off the existing save-to-library flow automatically —
+the user lands on `/train/run`, sees training progress, sees the
+completion banner, and a moment later the trained checkpoint is already
+in `/models` without needing to click anything. When OFF, behaviour is
+exactly today's: the **Save to library** button stays on `/train/run`
+and only fires on click.
+
+### Why
+
+A clinician who walks away during a 200-epoch overnight run comes back
+to find the model already in `/models`, ready for `/predict`. Today
+they'd come back to a finished run and need to remember to click
+**Save to library** before they can use the model — a step that's easy
+to forget when the run completed hours ago and the page is buried in a
+tab. Default ON because "the model I just spent 3 hours training is in
+my library" is the obvious-good-default for a clinical workflow tool.
+Power users (running experiments where most checkpoints aren't worth
+keeping) flip it OFF.
+
+### Acceptance criteria
+
+**Setting**
+
+- New entry on `AppSettings`: `auto_save_trained_models: boolean`,
+  default `true`. Persists to localStorage with the existing
+  `mergeWithDefaults` logic (so users who upgrade keep ON by default).
+- New row in `/settings` Predict-or-Train section (whichever fits — see
+  open questions below): `ToggleRow` with label
+  *"Auto-save trained models to the library"* and description
+  *"When a training run finishes, automatically copy `best.pt` into
+  Models (with the run's name as the filename). Skip to leave the
+  save-to-library step manual."*
+
+**Auto-save behaviour**
+
+- `/train/run` watches for `status` transitions to `"completed"`. When
+  the transition fires AND the auto-save setting is ON AND
+  `bestPt !== null`, automatically call `save.mutate()` once. Guarded
+  by a `useRef(false)` so a re-render or replay doesn't double-fire.
+- The existing manual **Save to library** button still renders if
+  auto-save fails (user can retry). On success it's hidden as today.
+- On success the savedModel state populates the same way as a manual
+  save; `setDefaultModel(model.task, model.name)` still fires per the
+  current flow.
+- A small toast / inline banner says *"Auto-saved as `<filename>`"*
+  with a link to `/models` so the user knows what happened without
+  having to search.
+
+**Failure handling**
+
+- Auto-save errors don't escalate — they surface as the same inline
+  `ApiError.message` red banner the manual flow uses, with the
+  manual button still available so the user can retry.
+- The job's status doesn't change. A failed auto-save is purely a
+  UI/library-write failure, not a training failure.
+
+### Why frontend-only (proposal)
+
+Settings live in localStorage (client-only by design — see
+`apps/web/lib/settings.ts` comment). The desktop is the only place
+that knows the user's preference, and it's the side that's already
+watching the WS event stream for completion. Backend-driven auto-save
+would need the setting to be posted to the server, surface a new
+endpoint, and decide what to do when no client is connected (a
+fire-and-forget training run via curl with auto-save would be a fun
+edge case but probably not worth supporting). Frontend-only is
+simpler and matches the clinical workflow (the user *is* watching the
+run).
+
+### Edge cases worth flagging now
+
+1. **User navigates away from `/train/run` before completion.** The
+   auto-save won't fire because no client is watching. When the user
+   returns, the initial GET-snapshot fetch finds the job already
+   completed; we trigger the same "if status === completed && auto-save
+   ON && savedModel === null" check on mount and the auto-save fires
+   then. Net: auto-save eventually happens whenever a client lands on
+   the page, even after a long delay.
+2. **Multiple tabs of `/train/run` open simultaneously.** Each tab
+   would try to auto-save. The backend handles this — second
+   `save_to_library` call returns the same path (collision
+   disambiguation from F2 kicks in if names happen to collide, but
+   here it's the same job → same name → same destination, so it's a
+   no-op overwrite at worst). Show one toast per tab.
+3. **Auto-save on a cancelled or failed run.** Doesn't fire — gated
+   on `status === "completed"`. Matches the manual button's gate.
+4. **Setting flipped OFF while a run is in flight.** Honoured. The
+   auto-save check reads the setting at completion time, not at run
+   start, so the latest user preference always wins.
+5. **F3 history page interaction.** After F3 ships, the history row
+   for an auto-saved run will show the `library_path` field populated.
+   Manual-save runs that the user never clicked Save on will have a
+   null library_path — the history detail page should offer a
+   "Save now" affordance for those.
+
+### Decisions (signed off 2026-05-21)
+
+1. **Default ON** — auto-save is the better workflow default; clinicians
+   shouldn't lose models because they forgot to click Save.
+2. **New Train section in `/settings`** — F3 creates the Train section
+   for its own auto-purge toggle; F5 adds the auto-save toggle there.
+3. **Auto-save does NOT auto-set-as-default** — the user explicitly
+   marks a model as default via the existing button on `/models`.
+   Splits from manual save behaviour (which currently does call
+   `setDefaultModel`), so the F5 commit also drops the
+   `setDefaultModel` call from the manual save path for consistency —
+   "saving to library" and "marking as default" are now two distinct
+   actions for both paths. F5 §"Implementation note" below details this.
+4. **Ship F5 separately after F3** — F3 lands first (the larger piece);
+   F5 ships immediately after as a small frontend-only patch (v0.13).
+   This keeps each phase reviewable and lets F5's history-row
+   integration (showing which runs were auto-saved) work the first
+   time since F3 has already populated the `library_path` column.
+
+### Implementation note — decision 3 ripples to manual save
+
+Today's `/train/run::save` mutation does `setDefaultModel(model.task,
+model.name)` immediately after a successful save. The user's decision
+that auto-save **should not** auto-set-as-default means we have two
+choices:
+
+- **(a) Asymmetric:** manual save still auto-sets-as-default; auto-save
+  doesn't. Internally inconsistent and confusing ("why is the
+  behaviour different depending on whether I clicked the button or it
+  fired itself?").
+- **(b) Symmetric:** both manual and auto save stop auto-setting the
+  default. User explicitly marks a model as default via the existing
+  button on `/models`. Adds one extra click for users who used to
+  rely on the implicit behaviour.
+
+Recommend **(b)** for v1, landing as part of the F5 commit. We'll call
+out the change in the F5 changelog so the small behaviour shift is
+visible.
+
+### Complexity
+
+**Small (~½ day).** One new settings field; one `useEffect` watching for
+status transitions on `/train/run`; one `useRef` guard; one toast/banner;
+documentation in CHANGELOG + PHASE-STATUS. Backend untouched.
+
+---
+
 ## Cross-cutting notes
 
 ### What does NOT need to change
@@ -347,7 +501,7 @@ mental model clear in the UI ("library" vs "drop new").
 
 ### Phasing recommendation
 
-If we build these post-pilot, group them into two phases:
+Original phasing (when these were all post-pilot ideas):
 
 - **P-models-polish** (#1) — independent, lands as a quick patch.
 - **P-history-and-library** (#2 → #3 → #4 as a single coherent
@@ -355,6 +509,13 @@ If we build these post-pilot, group them into two phases:
   makes #4's "last_used_at + run_count" meaningful, and #4's
   library list is what makes #3's history page useful as a filter
   destination.
+
+**Actual phasing as shipped** (user reordered to land before P7
+Polish): each item gets its own version-bumped phase commit so the
+in-app changelog tracks them individually. #5 (auto-save toggle)
+slots naturally after #3 since its history record gets richer with
+F3's `library_path` column, but is shippable any time as it's
+backend-free.
 
 ### When to revisit
 

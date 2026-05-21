@@ -13,29 +13,43 @@ for HTTP polling fallbacks and one-shot status checks.
 from __future__ import annotations
 
 import asyncio
+import json
+import shutil
+from datetime import timedelta
 from pathlib import Path
+from typing import Literal
 
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Query,
     WebSocket,
     WebSocketDisconnect,
     status,
 )
+from fastapi.responses import StreamingResponse
 
-from vrl_yolo.api.deps import get_job_manager, get_registry
+from vrl_yolo.api.deps import get_history, get_job_manager, get_registry
 from vrl_yolo.api.schemas import (
     ColabConnectRequest,
     ColabConnectResponse,
     ModelInfo,
+    PurgeHistoryResponse,
+    RerunHistoryResponse,
     StartTrainingRequest,
     StartTrainingResponse,
+    TrainingHistoryDetailResponse,
+    TrainingHistoryListResponse,
+    TrainingHistoryRow,
     TrainingJobInfo,
     TrainingMetrics,
+    TrainingStatus,
     UpdateTrainingMetadataRequest,
 )
 from vrl_yolo.engine.colab import ColabConnectError
+from vrl_yolo.engine.event_log import EventLog
+from vrl_yolo.engine.history_db import HistoryDb, HistoryRow, SortDir, SortKey
 from vrl_yolo.engine.registry import ModelRegistry
 from vrl_yolo.engine.training import JobManager, TrainingJob
 
@@ -78,6 +92,59 @@ def _record_to_info(record) -> ModelInfo:  # noqa: ANN001 — registry record
         params=record.params,
         size_mb=round(record.size_mb, 2),
         path=str(record.path),
+    )
+
+
+def _history_row_to_schema(row: HistoryRow) -> TrainingHistoryRow:
+    return TrainingHistoryRow(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        task=row.task,  # type: ignore[arg-type]
+        dataset_id=row.dataset_id,
+        dataset_missing=row.dataset_missing,
+        base_model=row.base_model,
+        epochs_total=row.epochs_total,
+        epoch_current=row.epoch_current,
+        imgsz=row.imgsz,
+        batch=row.batch,
+        accelerator_kind=row.accelerator_kind,  # type: ignore[arg-type]
+        device_arg=row.device_arg,
+        started_at=row.started_at,
+        finished_at=row.finished_at,
+        duration_s=row.duration_s,
+        status=row.status,  # type: ignore[arg-type]
+        error_message=row.error_message,
+        best_pt_path=row.best_pt_path,
+        library_path=row.library_path,
+        final_metrics=TrainingMetrics(**row.final_metrics),
+        dataset_snapshot=row.dataset_snapshot,
+    )
+
+
+def _history_row_to_job_info(row: HistoryRow) -> TrainingJobInfo:
+    """Re-shape a HistoryRow as a TrainingJobInfo for the PATCH response.
+
+    The PATCH route returns TrainingJobInfo for both live and terminal
+    paths; when the live job is gone we build the same shape from the
+    history record so callers don't see a schema change.
+    """
+    return TrainingJobInfo(
+        job_id=row.id,
+        name=row.name,
+        description=row.description,
+        status=row.status,  # type: ignore[arg-type]
+        dataset_id=row.dataset_id,
+        model=row.base_model,
+        task=row.task,  # type: ignore[arg-type]
+        epochs_total=row.epochs_total,
+        epoch_current=row.epoch_current,
+        started_at=row.started_at,
+        finished_at=row.finished_at,
+        accelerator_kind=row.accelerator_kind,  # type: ignore[arg-type]
+        output_dir="",  # not surfaced for terminal rows
+        metrics=TrainingMetrics(**row.final_metrics),
+        error_message=row.error_message,
     )
 
 
@@ -162,6 +229,183 @@ def connect_colab_session(
     return ColabConnectResponse(job_id=job.job_id)
 
 
+# ---- F3: training history (declared BEFORE /{job_id} so the
+# /history* literals beat the path-parameter match — FastAPI matches
+# in registration order on the same router).
+
+
+@router.get("/history", response_model=TrainingHistoryListResponse)
+def list_training_history(
+    task: Literal["detect", "classify"] | None = Query(None),
+    status_filter: TrainingStatus | None = Query(None, alias="status"),
+    dataset_id: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    sort_by: SortKey = Query("started_at"),
+    sort_dir: SortDir = Query("desc"),
+    history: HistoryDb = Depends(get_history),
+) -> TrainingHistoryListResponse:
+    """List training history rows. Paginated; filterable by task/status/dataset."""
+    rows, total = history.list(
+        task=task,
+        dataset_id=dataset_id,
+        status=status_filter,
+        limit=limit,
+        offset=offset,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    )
+    return TrainingHistoryListResponse(
+        rows=[_history_row_to_schema(r) for r in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post("/history/purge", response_model=PurgeHistoryResponse)
+def purge_training_history(
+    older_than_days: int = Query(..., ge=1, le=3650),
+    manager: JobManager = Depends(get_job_manager),
+    history: HistoryDb = Depends(get_history),
+) -> PurgeHistoryResponse:
+    """Delete rows + sidecars whose started_at is older than the cutoff.
+
+    Library checkpoints under models/<task>/ are NOT touched — they're
+    separate user artifacts cleaned up via the F1 delete affordance on
+    /models. Per-run output directories (`training/<id>/`) get removed
+    along with the sidecar so disk usage actually drops.
+    """
+    deleted_ids = history.purge_older_than(timedelta(days=older_than_days))
+    for jid in deleted_ids:
+        run_dir = manager.training_root / jid
+        if run_dir.is_dir():
+            shutil.rmtree(run_dir, ignore_errors=True)
+    return PurgeHistoryResponse(
+        deleted_count=len(deleted_ids), deleted_ids=deleted_ids
+    )
+
+
+@router.get("/history/{job_id}", response_model=TrainingHistoryDetailResponse)
+def get_training_history_row(
+    job_id: str,
+    history: HistoryDb = Depends(get_history),
+) -> TrainingHistoryDetailResponse:
+    row = history.get(job_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"history row {job_id!r} not found",
+        )
+    return TrainingHistoryDetailResponse(
+        row=_history_row_to_schema(row),
+        events_url=f"/api/training/history/{job_id}/events",
+    )
+
+
+@router.get("/history/{job_id}/events")
+def stream_training_history_events(
+    job_id: str,
+    manager: JobManager = Depends(get_job_manager),
+    history: HistoryDb = Depends(get_history),
+) -> StreamingResponse:
+    """Stream the run's events.jsonl(.gz) as NDJSON for chart replay.
+
+    404 if the history row doesn't exist; empty stream if the row
+    exists but the sidecar file is gone (e.g. ran out of disk).
+    """
+    if history.get(job_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"history row {job_id!r} not found",
+        )
+    output_dir = manager.training_root / job_id
+
+    def _iter():
+        for event in EventLog.replay(output_dir):
+            yield json.dumps(event) + "\n"
+
+    return StreamingResponse(_iter(), media_type="application/x-ndjson")
+
+
+@router.delete(
+    "/history/{job_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+def delete_training_history_row(
+    job_id: str,
+    delete_checkpoint: bool = Query(False),
+    manager: JobManager = Depends(get_job_manager),
+    history: HistoryDb = Depends(get_history),
+) -> None:
+    """Remove the history row + the per-run output directory.
+
+    `delete_checkpoint=true` also removes the library checkpoint at
+    `library_path` (a separate user-owned artifact under
+    `models/<task>/`). Default is False — the confirmation modal on
+    `/train/history` asks separately about the checkpoint.
+
+    Also evicts any still-resident in-memory `TrainingJob` so a
+    subsequent GET /api/training/{id} returns 404 cleanly.
+    """
+    row = history.get(job_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"history row {job_id!r} not found",
+        )
+
+    with manager._jobs_lock:  # noqa: SLF001 — same-package access
+        manager._jobs.pop(job_id, None)
+
+    history.delete(job_id)
+
+    run_dir = manager.training_root / job_id
+    if run_dir.is_dir():
+        shutil.rmtree(run_dir, ignore_errors=True)
+
+    if delete_checkpoint and row.library_path:
+        try:
+            Path(row.library_path).unlink()
+        except (OSError, FileNotFoundError):
+            pass
+
+
+@router.post(
+    "/history/{job_id}/rerun", response_model=RerunHistoryResponse
+)
+def rerun_training_history_row(
+    job_id: str,
+    history: HistoryDb = Depends(get_history),
+) -> RerunHistoryResponse:
+    """Return a prefill payload for the /train/configure wizard.
+
+    Doesn't actually start a run — that requires the user to click
+    through Start. For Colab rows we return the local-training shape
+    (per PLAN-F3 decision 6); the user opens the Colab modal again
+    from /train/configure if they want to re-run on Colab.
+    """
+    row = history.get(job_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"history row {job_id!r} not found",
+        )
+    return RerunHistoryResponse(
+        dataset_id=row.dataset_id,
+        dataset_missing=row.dataset_missing,
+        model=row.base_model,
+        task=row.task,  # type: ignore[arg-type]
+        epochs=row.epochs_total,
+        imgsz=row.imgsz,
+        batch=row.batch,
+        name=row.name,
+        description=row.description,
+    )
+
+
+# ---- Per-job routes (after /history so the literals win) ---------------------
+
+
 @router.get("/{job_id}", response_model=TrainingJobInfo)
 def get_training_job(
     job_id: str,
@@ -181,13 +425,18 @@ def update_training_metadata(
     job_id: str,
     body: UpdateTrainingMetadataRequest,
     manager: JobManager = Depends(get_job_manager),
+    history: HistoryDb | None = Depends(get_history),
 ) -> TrainingJobInfo:
-    """Edit the name + description of an in-flight training run (F2).
+    """Edit a run's name + description (F2 + F3-unlocked).
 
-    Gated server-side to ``status in {queued, running}``; completed /
-    failed / cancelled runs return **409 Conflict** (the request is
-    well-formed — the run's lifecycle state just forbids the edit).
-    History edits will land in F3 once the persistent layer ships.
+    F2 shipped this gated to ``status in {queued, running}`` because
+    completed-run edits had nowhere durable to live. F3 unlocked
+    completed runs: the manager now routes terminal-state edits
+    through the persistent history layer (`HistoryDb.update_metadata`)
+    while still mirroring them to any in-memory snapshot reader.
+
+    Returns the updated `TrainingJobInfo` whether the row lives in
+    memory (`JobManager`) or only on disk (`HistoryDb`).
     """
     try:
         job = manager.update_metadata(
@@ -198,10 +447,23 @@ def update_training_metadata(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"job {job_id!r} not found",
         ) from exc
-    except ValueError as exc:
+    if job is not None:
+        return _job_to_info(job)
+    # Terminal-only path — fetch the row back from history. Should
+    # always succeed here since update_metadata raised KeyError if
+    # the row didn't exist, but be defensive.
+    if history is None:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"job {job_id!r} not found",
+        )
+    row = history.get(job_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"job {job_id!r} not found",
+        )
+    return _history_row_to_job_info(row)
     return _job_to_info(job)
 
 
@@ -302,3 +564,5 @@ async def stream_training(websocket: WebSocket, job_id: str) -> None:
         await websocket.close()
     except Exception:  # noqa: BLE001 — close-time races aren't actionable
         pass
+
+

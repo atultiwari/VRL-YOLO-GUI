@@ -191,17 +191,26 @@ def test_update_metadata_none_name_leaves_untouched(
     assert updated.snapshot()["description"] == "New desc"
 
 
-def test_update_metadata_rejects_completed_job(manager: JobManager) -> None:
-    job = _make_job(name="Done", status="completed")
-    manager._jobs[job.job_id] = job
-
-    with pytest.raises(ValueError, match="can only edit"):
-        manager.update_metadata(job.job_id, name="Try edit")
-
-
 def test_update_metadata_unknown_job(manager: JobManager) -> None:
+    # F3: no history wired here, so terminal-only IDs raise KeyError.
     with pytest.raises(KeyError):
         manager.update_metadata("does-not-exist", name="x")
+
+
+def test_update_metadata_on_completed_job_was_gated_in_f2_is_unlocked_in_f3(
+    manager: JobManager,
+) -> None:
+    """F2 raised ValueError("can only edit") on terminal-state edits.
+
+    F3 routes terminal edits through HistoryDb; without history wired
+    here, the call raises KeyError because there's nowhere durable to
+    write to. The history-backed happy-path is exercised in
+    tests/test_history.py.
+    """
+    job = _make_job(name="Done", status="completed")
+    manager._jobs[job.job_id] = job
+    with pytest.raises(KeyError):
+        manager.update_metadata(job.job_id, name="Try edit")
 
 
 # ---- PATCH /api/training/{job_id} ----------------------------------------
@@ -220,34 +229,26 @@ def test_patch_route_updates_name(
     assert resp.json()["name"] == "After"
 
 
-def test_patch_route_409_on_completed(
-    manager: JobManager, client: TestClient
-) -> None:
-    job = _make_job(name="Done", status="completed")
-    manager._jobs[job.job_id] = job
-
-    resp = client.patch(
-        f"/api/training/{job.job_id}", json={"name": "Edit"}
-    )
-    assert resp.status_code == 409
-    assert "can only edit" in resp.json()["detail"]
-
-
-def test_patch_route_409_on_failed(
-    manager: JobManager, client: TestClient
-) -> None:
-    job = _make_job(name="Broken", status="failed")
-    manager._jobs[job.job_id] = job
-
-    resp = client.patch(
-        f"/api/training/{job.job_id}", json={"description": "Forensic notes"}
-    )
-    assert resp.status_code == 409
-
-
 def test_patch_route_404_unknown(client: TestClient) -> None:
+    # No history wired here, so an unknown id raises KeyError → 404.
+    # F3 happy-path for completed-row PATCH is in tests/test_history.py.
     resp = client.patch(
         "/api/training/nonexistent", json={"name": "x"}
+    )
+    assert resp.status_code == 404
+
+
+def test_patch_route_404_on_terminal_without_history(
+    manager: JobManager, client: TestClient
+) -> None:
+    """F2's 409-on-completed gate became F3's KeyError → 404 when no
+    history is wired. The happy path (terminal edit succeeds via
+    HistoryDb) is in tests/test_history.py.
+    """
+    job = _make_job(name="Done", status="completed")
+    manager._jobs[job.job_id] = job
+    resp = client.patch(
+        f"/api/training/{job.job_id}", json={"name": "Edit"}
     )
     assert resp.status_code == 404
 

@@ -44,7 +44,9 @@ from vrl_yolo.engine.colab import (
     fetch_best_pt as colab_fetch_best_pt,
     request_cancel as colab_request_cancel,
 )
+from vrl_yolo.engine.event_log import EventLog
 from vrl_yolo.engine.hardware import detect_accelerator
+from vrl_yolo.engine.history_db import HistoryDb
 from vrl_yolo.engine.registry import ModelRegistry
 
 # Path to the desktop entry script. In dev mode JobManager passes this
@@ -175,6 +177,12 @@ class TrainingJob:
     # Set by the cancel path on Colab jobs so the reader thread breaks
     # out of any backoff sleep or read loop cleanly. None for local jobs.
     _reader_stop_event: threading.Event | None = None
+    # F3 — per-run sidecar writer for events.jsonl. None when running
+    # outside of a JobManager (some tests build TrainingJobs by hand).
+    _event_log: EventLog | None = None
+    # F3 — persistent history db. None for hand-built jobs / tests.
+    # Updated on every terminal event so /train/history reflects state.
+    _history: HistoryDb | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     @property
@@ -206,6 +214,34 @@ class TrainingJob:
                     event.get("message") or "training cancelled"
                 )
                 self.finished_at = datetime.now(timezone.utc)
+
+        # F3: persist outside the lock so disk IO doesn't stall other
+        # threads that need to read snapshot(). EventLog has its own
+        # internal lock for write serialisation.
+        if self._event_log is not None:
+            self._event_log.append(event)
+
+        # F3: on terminal events, flush snapshot to history + close/gzip
+        # the sidecar so the file is ready for replay immediately.
+        terminal = self.status in {"completed", "failed", "cancelled"}
+        if terminal:
+            if self._history is not None:
+                try:
+                    self._history.update_status_from_snapshot(
+                        self.job_id, self.snapshot()
+                    )
+                except Exception:  # noqa: BLE001
+                    # History updates are best-effort — never let them
+                    # break the in-memory event flow.
+                    pass
+            if self._event_log is not None:
+                # Background thread so a slow gzip doesn't block the
+                # reader thread that called us.
+                threading.Thread(
+                    target=self._event_log.close_and_compress,
+                    name=f"event-log-gzip-{self.job_id[:8]}",
+                    daemon=True,
+                ).start()
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -245,11 +281,19 @@ class JobManager:
     HTTP handlers read snapshots under the same lock.
     """
 
-    def __init__(self, *, storage_root: Path) -> None:
+    def __init__(
+        self,
+        *,
+        storage_root: Path,
+        history: HistoryDb | None = None,
+    ) -> None:
         self._training_root = storage_root / "training"
         self._training_root.mkdir(parents=True, exist_ok=True)
         self._jobs: dict[str, TrainingJob] = {}
         self._jobs_lock = threading.Lock()
+        # F3: optional persistent history. None is allowed so tests
+        # that don't care about history don't have to wire one up.
+        self._history = history
 
     @property
     def training_root(self) -> Path:
@@ -339,6 +383,29 @@ class JobManager:
             name=final_name,
             description=description.strip(),
         )
+        # F3: open the per-run event sidecar before any event flows.
+        job._event_log = EventLog.for_run(output_dir)
+        # F3: hand the job a reference to the history db so terminal
+        # events can flush state directly (no manager round-trip).
+        job._history = self._history
+        # F3: persistent history row, start-time snapshot.
+        if self._history is not None:
+            self._history.insert_run(
+                job_id=job_id,
+                name=job.name,
+                description=job.description,
+                task=task,
+                dataset_id=dataset_root.name,
+                dataset_snapshot=None,  # populated later via update_status if needed
+                base_model=Path(model_path).name,
+                epochs_total=epochs,
+                imgsz=imgsz,
+                batch=batch,
+                accelerator_kind=accelerator.kind,
+                device_arg=device_arg,
+                started_at=started_at,
+                status="running",
+            )
 
         # CRITICAL: in a frozen PyInstaller .app, `sys.executable` is the
         # bundle's main binary and the bootloader IGNORES `-m module` —
@@ -504,6 +571,27 @@ class JobManager:
         )
         job._colab_session = session
         job._reader_stop_event = threading.Event()
+        # F3: per-run sidecar + history-row insert. Same hooks as the
+        # local-training path so /train/history shows Colab runs too.
+        job._event_log = EventLog.for_run(output_dir)
+        job._history = self._history
+        if self._history is not None:
+            self._history.insert_run(
+                job_id=job_id,
+                name=job.name,
+                description=job.description,
+                task=init.task,
+                dataset_id=synthetic_root.name,
+                dataset_snapshot=None,
+                base_model=init.model,
+                epochs_total=init.epochs_total,
+                imgsz=init.imgsz,
+                batch=init.batch,
+                accelerator_kind="colab",
+                device_arg=None,
+                started_at=started_at,
+                status=seeded_status,
+            )
 
         if init.error_message and init.status == "error":
             job.error_message = init.error_message
@@ -571,41 +659,95 @@ class JobManager:
         name: str | None = None,
         description: str | None = None,
     ) -> TrainingJob:
-        """Edit a run's name + description while it's still in flight.
+        """Edit a run's name + description.
 
-        Gated to ``status in {queued, running}`` — after a run
-        completes, edits need the F3 persistent-history layer to
-        land somewhere durable. Until F3 ships, completed runs are
-        read-only (route maps ValueError → 409).
+        F2 shipped this gated to ``status in {queued, running}`` because
+        completed-run edits had nowhere durable to live. F3 unlocks
+        completed runs by routing them through ``HistoryDb``:
 
-        Field semantics:
-        - ``None`` (either field) = "leave as-is" (caller didn't
-          touch it).
-        - Empty / whitespace-only ``description`` = clear it.
-        - Empty / whitespace-only ``name`` = reset to the
-          auto-generated default. Lets the user re-derive the
-          placeholder by clearing the field — matches the UI's
-          "blank means default" semantics.
+        - **Live job (queued/running)**: edit the in-memory
+          ``TrainingJob`` and mirror the change to the history row so
+          ``/train/run``'s WS snapshot reflects it instantly.
+        - **Terminal job, in-memory entry gone or status terminal**:
+          edit through ``HistoryDb.update_metadata`` only. The
+          in-memory job (if still around) gets mirrored too so any
+          open snapshot reader sees the new value.
+
+        Raises KeyError when neither in-memory nor history has the id.
+
+        Field semantics (unchanged from F2):
+        - ``None`` = leave as-is.
+        - Empty ``description`` = clear.
+        - Empty ``name`` = reset to the auto-generated default.
         """
         job = self.get(job_id)
-        if job is None:
-            raise KeyError(job_id)
-        with job._lock:
-            if job.status not in {"queued", "running"}:
-                raise ValueError(
-                    f"job is {job.status!r}; can only edit name/description "
-                    "on queued or running runs (history edits land in F3)"
+
+        # Compute the "live name" replacement value once so both paths
+        # match: empty name → default-name from the job's start-time
+        # context (in-memory job preferred; falls back to history row).
+        def _resolved_name() -> str | None:
+            if name is None:
+                return None
+            stripped = name.strip()
+            if stripped:
+                return stripped[:200]
+            if job is not None:
+                return _default_run_name(
+                    job.task, job.dataset_root.name, job.started_at
                 )
-            if name is not None:
-                stripped = name.strip()
-                if not stripped:
-                    job.name = _default_run_name(
-                        job.task, job.dataset_root.name, job.started_at
+            # Job's gone from memory; let HistoryDb regenerate with
+            # whatever it has stored.
+            if self._history is not None:
+                row = self._history.get(job_id)
+                if row is not None:
+                    try:
+                        when = datetime.fromisoformat(row.started_at)
+                    except ValueError:
+                        when = datetime.now(timezone.utc)
+                    return _default_run_name(
+                        row.task, row.dataset_id, when  # type: ignore[arg-type]
                     )
-                else:
-                    job.name = stripped[:200]
-            if description is not None:
-                job.description = description.strip()[:2000]
+            return ""  # fall-through; HistoryDb will coerce to "(unnamed)"
+
+        resolved_name = _resolved_name()
+        resolved_desc = (
+            None
+            if description is None
+            else description.strip()[:2000]
+        )
+
+        # Live-job edit (status running or queued).
+        if job is not None and job.status in {"queued", "running"}:
+            with job._lock:
+                if resolved_name is not None:
+                    job.name = resolved_name
+                if resolved_desc is not None:
+                    job.description = resolved_desc
+            if self._history is not None:
+                self._history.update_metadata(
+                    job_id, name=resolved_name, description=resolved_desc
+                )
+            return job
+
+        # Terminal-job edit: history is the source of truth.
+        if self._history is None:
+            # No history wired up (older callers / tests) — surface as
+            # KeyError so callers see a 404 rather than a silent no-op.
+            raise KeyError(job_id)
+        updated_row = self._history.update_metadata(
+            job_id, name=resolved_name, description=resolved_desc
+        )
+        if updated_row is None and job is None:
+            raise KeyError(job_id)
+        # Mirror to the still-resident in-memory job so any open
+        # snapshot reader (a slow client polling getTrainingJob) sees
+        # the new value.
+        if job is not None:
+            with job._lock:
+                if resolved_name is not None:
+                    job.name = resolved_name
+                if resolved_desc is not None:
+                    job.description = resolved_desc
         return job
 
     def save_to_library(
@@ -674,6 +816,13 @@ class JobManager:
             dest = dest_dir / run_label
         shutil.copy2(job.best_pt, dest)
         registry.scan()
+        # F3: remember which library checkpoint this run produced so
+        # /train/history can show "✓ in library" + link to /models.
+        if self._history is not None:
+            try:
+                self._history.set_library_path(job_id, dest)
+            except Exception:  # noqa: BLE001
+                pass
         return dest
 
 

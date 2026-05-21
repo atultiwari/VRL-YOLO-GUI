@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { Brain, Clock, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -231,6 +231,28 @@ export default function SettingsPage() {
           timezone={settings.timezone}
           onChange={(v) => setSetting("timezone", v)}
         />
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Brain className="size-4 text-accent" />
+              Train
+            </CardTitle>
+            <CardDescription>
+              Defaults for the training workspace.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <ToggleRow
+              label="Auto-purge training runs older than 30 days"
+              description={
+                "When you open Training History, automatically delete rows whose Started date is more than 30 days ago. Library checkpoints stay in /models — only the history record and replay events are removed."
+              }
+              checked={settings.auto_purge_old_runs}
+              onChange={(v) => setSetting("auto_purge_old_runs", v)}
+            />
+          </CardContent>
+        </Card>
 
         <div className="flex justify-end">
           <Button variant="secondary" size="sm" onClick={reset}>

@@ -3,8 +3,8 @@
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones)
 > plus the post-v0.9 Future-Features chain in
 > [`docs/FUTURE-FEATURES.md`](FUTURE-FEATURES.md). Updated at the end of
-> each phase boundary. **Last edit: 2026-05-21 (F2 — Training-run name +
-> description + app-wide timezone setting).**
+> each phase boundary. **Last edit: 2026-05-21 (F3 — Persistent
+> training history; SQLite + /train/history + edit-lock removed).**
 >
 > **Known limitations and deferred work** live in
 > [`docs/CARRY-FORWARDS.md`](CARRY-FORWARDS.md) — full diagnoses + fix
@@ -41,14 +41,15 @@
 | P6.fix-1 — Run on Colab callout visible on all hardware kinds | ✅ done | `v0.9.1` | `b2dbe46` |
 | **F1 — Models library: delete + reveal + path on every card** | ✅ done | `v0.10-f1-models-polish` | `788dee3` |
 | **F2 — Training-run name + description + app-wide TZ setting** | ✅ done | `v0.11-f2-run-naming` | `fd429fc` |
-| F3 — Persistent training history | ⏳ next (depends F2) | — | — |
+| **F3 — Persistent training history (SQLite + /train/history)** | ✅ done | `v0.12-f3-history` | _SHA pending_ |
 | F4 — Dataset library: reuse + grouping | ⏳ pending (depends F3) | — | — |
+| F5 — Auto-save trained models to library (Settings toggle, default ON) | ⏳ next | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at the F2 commit (`v0.11-f2-run-naming`). **F2 ships training-run name + description end-to-end + the app-wide TZ setting** (wide-scope decision per `docs/PLAN-F2.md` §9 — every UI timestamp now routes through `apps/web/lib/format-date.ts` so the user's preferred zone repaints everything). Also folds in a critical F1 regression fix (save-to-library 500'd since v0.10.0 because the training router has a duplicate `_record_to_info` that wasn't updated when F1 added the `path` field). All 58 backend tests + tsc green. Remaining P-phases (P7 Polish, P8/P9 Packaging, P10 Pilot) still paused while the F-chain runs. The real-world pilot test (`docs/PILOT-TEST.md`) hasn't been run yet — that's a clinician + dataset task, not a Claude task, and the gate for v1.0. **Next:** F3 — Persistent training history (depends F2; introduces SQLite for run + history persistence).
+**Current head:** `main` at the F3 commit (`v0.12-f3-history`). **F3 introduces the first real persistence dependency** in `server/vrl_yolo/` — SQLite at `<storage_root>/training.db` plus per-run `events.jsonl(.gz)` sidecars. Every training run (local + Colab) writes a history row + a replay sidecar from the moment it starts; rows update through the lifecycle and gain `library_path` when save-to-library succeeds. New `/train/history` page lists runs with task/status/dataset filters + sort dropdowns; new `/train/history/view?id=…` detail page replays the run's complete event stream into the same recharts components `/train/run` uses. F2's PATCH edit-lock is removed — completed runs are now editable via the history layer. New opt-in auto-purge setting (>30 days, default OFF) in a new **Train** section of `/settings` that F5 will add its auto-save toggle to. 89 total backend tests + tsc green. **Next:** F5 — Auto-save trained models to library (the user's reordered fourth item from `docs/FUTURE-FEATURES.md`). F4 (Dataset library) follows after F5.
 
 ---
 
@@ -620,7 +621,7 @@ In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runne
 
 ---
 
-### ✅ F2 — Training-run name + description + app-wide TZ setting · `v0.11-f2-run-naming` · _SHA pending_
+### ✅ F2 — Training-run name + description + app-wide TZ setting · `v0.11-f2-run-naming` · `fd429fc`
 
 **Trigger:** second of the four post-v0.9 Future-Features items from `docs/FUTURE-FEATURES.md`, planned in `docs/PLAN-F2.md` with 8 decisions signed off in two rounds: (1) default name format `<Task> · <dataset-stub> · YYYY-MM-DD HH:MM`; (2) `python-slugify` dep for Unicode names; (3) 409 Conflict for PATCH on completed runs; (4) `astimezone()` for default name + add app-wide timezone setting; (5) preserve case in slug; (6) 2000-char description cap; (7) live placeholder rebuilds on task/dataset change; (8) popover for description-edit on `/train/run`.
 
@@ -657,20 +658,52 @@ In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runne
 
 ---
 
-## Up next: F3 — Persistent training history
+### ✅ F3 — Persistent training history (SQLite + /train/history + edit-lock removed) · `v0.12-f3-history` · _SHA pending_
 
-**Estimated medium (3–5 days)** per `docs/FUTURE-FEATURES.md` item 3. The biggest single piece of the F-chain — introduces SQLite as the first real persistence dependency in `server/vrl_yolo/`. Foundation for F4 (the dataset library lists "last_used_at" + "run_count" which come straight off F3's history rows).
+**Trigger:** third of the four post-v0.9 Future-Features items from `docs/FUTURE-FEATURES.md`, planned in `docs/PLAN-F3.md` with 8 decisions signed off in two rounds: (1) hand-rolled schema migrations; (2) keep forever + opt-in auto-purge>30d setting (default OFF); (3) immediate gzip on terminal event; (4) keep history row + flag `dataset_missing: true` when dataset folder deleted; (5) `delete_checkpoint=false` default with separate checkbox; (6) Re-run from Colab row → local-training wizard prefill; (7) sidebar entry under Train section; (8) read-only rows on history detail.
 
-- SQLite at `<storage_root>/training.db` — schema versioned via a hand-rolled `schema_version` int + migration list (Alembic is overkill for a 1-table schema; switch if it grows past 4–5 tables).
-- One row per run with the columns the user listed in `docs/FUTURE-FEATURES.md` §3: id, name, description (from F2), task, dataset_id, dataset_snapshot_json, base_model, hyperparams, accelerator + device, started_at, finished_at, status, error_message, best_pt_path, library_path, final_metrics_json.
-- Sidecar `events.jsonl` per run for chart replay (kept out of SQLite so the row stays small + queryable; gzipped on `completed` status to bound disk use across 50+ runs).
-- `/train/history` — sortable / filterable table.
-- `/train/history/<id>` — detail view that re-uses the existing live-training chart components, replaying from `events.jsonl`.
-- Actions: Re-run with same settings · Delete from history (with checkpoint-too prompt) · Edit name / description (post-hoc — un-blocks the F2 "editing locked" gate).
+**Scope shipped:**
 
-**Open decisions for F3 sign-off** (before code): schema-migration strategy (hand-rolled vs Alembic); retention policy (forever vs auto-purge after N days); events.jsonl compression boundary; behaviour when a row's dataset folder has been deleted; whether to delete the library checkpoint when its history row is deleted.
+| # | Subject | Outcome |
+|---|---|---|
+| F3.1 | `engine/event_log.py` | New module. `EventLog.for_run(output_dir)` opens a line-buffered `events.jsonl` writer (created lazily on first `append`); `close_and_compress()` gzips in place; `replay(output_dir)` auto-picks `.gz` over `.jsonl` and yields events as a generator. Internal `threading.Lock` for write serialisation; all disk errors caught + logged so a permission glitch or full disk can't take down a training run. |
+| F3.2 | `engine/history_db.py` | New module. `HistoryDb` class wraps SQLite with one-connection-per-call + a process-level lock around writes (avoids "database is locked" under concurrent flushes). `migrate()` reads `schema_version`, runs ordered `_migrate_vN_to_vM` functions, seeds the table on first install. Writers: `insert_run`, `update_status_from_snapshot`, `set_library_path`, `update_metadata`, `delete`, `purge_older_than`. Readers: `get`, `list` (paginated + filtered + sortable), `distinct_dataset_ids`. `HistoryRow` is a frozen dataclass mirroring the SQL columns plus a computed `dataset_missing` boolean. |
+| F3.3 | Schema v1 (one table + indexes) | `training_runs` carries: id, name, description (F2), task, dataset_id, dataset_snapshot_json, base_model, epochs_total, imgsz, batch, accelerator_kind, device_arg, started_at, finished_at, status, epoch_current, error_message, best_pt_path, library_path, final_metrics_json. Indexes on status, task, dataset_id, started_at. WAL journal mode for read concurrency. |
+| F3.4 | Lifespan integration | `api/lifespan.py` constructs `HistoryDb(db_path=<storage>/training.db, datasets_root=<storage>/datasets)`, calls `migrate()`, passes to `JobManager(history=...)`, hangs both off `app.state`. New `get_history` dep that gracefully returns `None` if state hasn't been wired (tests with no history). |
+| F3.5 | `TrainingJob` + `JobManager` hooks | New `TrainingJob._event_log: EventLog \| None` and `_history: HistoryDb \| None` fields. `append_event` (outside the lock so disk IO doesn't stall snapshot readers) flushes the event to the sidecar; on terminal events it also pushes the snapshot to `HistoryDb.update_status_from_snapshot` and spawns a background daemon thread to call `close_and_compress`. `JobManager.start()` + `start_colab_job()` both open the EventLog, set `job._history`, and call `history.insert_run(...)` after the job lands in `_jobs`. `save_to_library()` calls `history.set_library_path(...)` after the file copy succeeds. |
+| F3.6 | `update_metadata` un-locks completed runs | F2 raised `ValueError("can only edit")` on terminal status (→ route mapped to 409). F3 routes terminal-state edits through `HistoryDb.update_metadata` and mirrors the change to the in-memory `TrainingJob` if still resident. Live-job path unchanged. Method now returns `TrainingJob \| None` — `None` signals "use HistoryDb.get(id) for the response"; the PATCH route handles both shapes via `_history_row_to_job_info`. |
+| F3.7 | 6 new routes | All declared *before* the `/{job_id}` routes so the `/history` literals beat the path-parameter match. `GET /api/training/history` (paginated, filter by task/status/dataset_id, sort by started_at/name/duration); `POST /api/training/history/purge?older_than_days=N` (deletes rows + per-run dirs; library checkpoints untouched); `GET /api/training/history/{id}` (single row + events_url); `GET /api/training/history/{id}/events` (NDJSON stream from sidecar); `DELETE /api/training/history/{id}?delete_checkpoint=…` (row + per-run dir + optional library checkpoint); `POST /api/training/history/{id}/rerun` (StartTrainingBody-shaped prefill payload). |
+| F3.8 | F2 PATCH gate removed | `PATCH /api/training/{id}` now returns 200 for completed/failed/cancelled rows (was: 409 Conflict). The schema docstring for `UpdateTrainingMetadataRequest` was updated to reflect "F2 gated, F3 unlocked". |
+| F3.9 | Frontend types + helpers | New types: `TrainingHistoryRow`, `TrainingHistoryListResponse`, `TrainingHistoryDetailResponse`, `PurgeHistoryResponse`, `RerunHistoryResponse`. New API helpers: `listTrainingHistory(args)`, `getTrainingHistoryRow(id)`, `fetchTrainingHistoryEvents(id)` (parses NDJSON line-by-line), `deleteTrainingHistoryRow(id, {deleteCheckpoint})`, `rerunTrainingHistoryRow(id)`, `purgeTrainingHistory(olderThanDays)`. New `AppSettings.auto_purge_old_runs: boolean` (default false). |
+| F3.10 | `/settings` Train section + sidebar | New Train section in `/settings` (a third Card after Predict + Timezone) hosting the auto-purge toggle. F5 will add its auto-save toggle to this same section. Sidebar gets a "Training history" entry under the Train workspace nav with the `History` lucide icon. |
+| F3.11 | `/train/history` list page | New page at `apps/web/app/train/history/page.tsx`. Sortable + filterable table (Name / Task / Dataset / Started / Duration / Status / Best / In library? / Re-run + Delete). Auto-purge fires once on mount when the setting is ON (via `useRef` guard) and shows a toast on success/failure. Manual "Clean up runs older than 30 days" button in the header. `Re-run` button navigates to `/train/configure?from=<history_id>`. Delete opens a confirmation modal with an optional "Also delete the saved checkpoint" checkbox (default OFF). |
+| F3.12 | `/train/history/view?id=<job_id>` detail page | New page at `apps/web/app/train/history/view/page.tsx`. **URL is query-param-based, not dynamic `[id]`** — Next.js static export can't pre-render `[id]` routes without `generateStaticParams`, and history rows are runtime data. Page is wrapped in `<Suspense>` per Next 15's static-export requirement for `useSearchParams`. Header: name + description with inline pencils (works on completed runs now); Started / Finished / Elapsed timestamps via formatDate/formatElapsed (TZ-aware). Summary cards: Task / Dataset / Model / Hardware / Epochs / Image size / Batch / In library?. Final metrics card (per-task fields). Charts re-implemented inline using the same recharts primitives `/train/run` uses (DetectLossChart, DetectMapChart, ClassifyLossChart, ClassifyAccuracyChart) reading from a series built by replaying events.jsonl. Actions: Re-run · Save to library (if completed + best.pt + not already saved) · Delete. |
+| F3.13 | `/train/configure` prefill from rerun | Reads `?from=<history_id>` on mount, calls `rerunTrainingHistoryRow` + `fetchDataset`, applies to the train store via `setTask`/`setDataset`/`patchHyperparams`, prefills local Name + Description state. Shows a notice "Prefilled from run 'X'. Tweak any field before clicking Start." Dataset-missing rows bounce back to `/train` with an explanatory notice. The existing dataset-redirect guard now waits for the prefill effect before bouncing (was bouncing mid-prefill before). Page wrapped in `<Suspense>` for the same Next 15 static-export reason as the history detail page. |
+| F3.14 | `/train/run` edit-lock removed | The F2 "Editing locked after the run finishes (re-enabled when history persistence lands in F3)" hint is gone. `editingLocked` is now hard-coded `false` (keeping the variable to minimise the diff) so the existing conditional rendering branches keep working but the pencils stay live the whole time. |
+| F3.15 | Backend tests | New `tests/test_history.py` with 32 tests covering schema migration (fresh + idempotent), `HistoryDb` writers (insert / update_status / set_library_path / update_metadata / delete / purge_older_than), `HistoryDb` readers (list pagination + filter by task/status/dataset + sort by name + dataset_missing flag), `EventLog` round-trips (compressed + uncompressed + idempotent close), `JobManager` integration (terminal event populates row via the in-memory hook; save_to_library populates library_path), F3-unlocked PATCH path on terminal rows (both still-in-memory and history-only), all 6 new routes end-to-end including filter combos / pagination / delete with-and-without checkpoint / purge with disk cleanup / rerun prefill shape. The F2 tests that expected 409 on completed-row PATCH were updated to reflect F3's KeyError → 404 fall-through when no history is wired in the test. **89 total backend tests across the project, all green.** |
+| F3.16 | Verification | Boot + curl smoke against the live binary: `GET /api/training/history` returns `{rows: [], total: 0, ...}` (DB created + migrated on first lifespan), `GET /api/training/history/unknown` → 404 clinician-readable, `POST /api/training/history/purge?older_than_days=30` → 200 with `{deleted_count: 0}`. User manually verified the UI flow end-to-end. |
 
-**Phase tag at completion:** `v0.12-f3-history`.
+**Carried-forward:**
+- History DB grows unbounded by default. Auto-purge is OFF by default + capped at 30 days when ON. Pilot users who don't enable it accumulate rows + sidecars indefinitely (typical compressed run ~500 KB).
+- Re-run from a Colab row prefills the local-training wizard (per PLAN-F3 decision 6). Pre-filling the Colab modal directly is a future follow-up.
+- No bulk-select / bulk-delete in the history table — Delete is one row at a time. Future polish item if pilot users hit it.
+- The detail page doesn't show free-form stdout log lines (the unstructured text from runner output) — only the structured-event chart-replay. Future work.
+- The two `_record_to_info()` helpers in `routers/models.py` and `routers/training.py` are still duplicated, carrying forward from F2 with a warning comment in both.
+
+---
+
+## Up next: F5 — Auto-save trained models to library
+
+**Estimated small (~½ day)** per `docs/FUTURE-FEATURES.md` item 5. User reordered to ship F5 right after F3 (F4 follows) since the history record now shows which runs got auto-saved, making F5's UX immediately meaningful. Frontend-only — no backend changes needed.
+
+- New `AppSettings.auto_save_trained_models: boolean` (default **ON**) on the Train section of `/settings` (the section F3 just created).
+- `/train/run` watches for status transitions to `"completed"`. When the transition fires + the setting is ON + `bestPt !== null` + `savedModel === null`, automatically dispatch the existing `save.mutate()`. Guarded by `useRef(false)` so a re-render or replay doesn't double-fire. Same auto-fire on `/train/history/view` for runs that completed while the user was elsewhere.
+- Small toast on success: *"Auto-saved as `<filename>`"* with a link to `/models`.
+- **Behaviour change:** auto-save does NOT auto-set-as-default. For symmetry, the manual save path also drops its `setDefaultModel` call — "saving to library" and "marking as default" become two distinct actions for both paths. Called out clearly in the F5 changelog.
+
+**Open decisions for F5 sign-off** (before code): nothing material — the FUTURE-FEATURES decisions (default ON, new Train section, no auto-default, ship after F3) are signed off. Implementation should be straightforward.
+
+**Phase tag at completion:** `v0.13-f5-autosave`.
 
 ---
 

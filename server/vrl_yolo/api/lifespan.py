@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from vrl_yolo.config import Settings
+from vrl_yolo.engine.history_db import HistoryDb
 from vrl_yolo.engine.inference import InferenceEngine
 from vrl_yolo.engine.registry import ModelRegistry
 from vrl_yolo.engine.training import JobManager
@@ -35,9 +36,16 @@ async def lifespan(app: FastAPI):
     registry = ModelRegistry(bundled_dir=bundled, user_dir=user)
 
     storage_root = settings.storage_path or resolve_storage_root()
-    job_manager = JobManager(storage_root=storage_root)
+    datasets_root = storage_root / "datasets"
+    history_db = HistoryDb(
+        db_path=storage_root / "training.db",
+        datasets_root=datasets_root,
+    )
+    history_db.migrate()
+    job_manager = JobManager(storage_root=storage_root, history=history_db)
 
     app.state.registry = registry
     app.state.engine = InferenceEngine(registry)
     app.state.job_manager = job_manager
+    app.state.history = history_db
     yield
