@@ -33,6 +33,7 @@ from vrl_yolo.api.schemas import (
     StartTrainingResponse,
     TrainingJobInfo,
     TrainingMetrics,
+    UpdateTrainingMetadataRequest,
 )
 from vrl_yolo.engine.colab import ColabConnectError
 from vrl_yolo.engine.registry import ModelRegistry
@@ -45,6 +46,8 @@ def _job_to_info(job: TrainingJob) -> TrainingJobInfo:
     snap = job.snapshot()
     return TrainingJobInfo(
         job_id=snap["job_id"],
+        name=snap["name"],
+        description=snap["description"],
         status=snap["status"],
         dataset_id=snap["dataset_id"],
         model=snap["model"],
@@ -61,6 +64,11 @@ def _job_to_info(job: TrainingJob) -> TrainingJobInfo:
 
 
 def _record_to_info(record) -> ModelInfo:  # noqa: ANN001 — registry record
+    # Keep this in sync with `routers/models.py::_record_to_info` — they
+    # produce the same shape. The F2 manual-verification pass surfaced
+    # a regression where F1 added `path` to ModelInfo but only updated
+    # the copy in models.py; this one silently 500'd the save-to-library
+    # route until covered by `test_save_to_library_route_returns_valid_model_info`.
     return ModelInfo(
         name=record.name,
         task=record.task,
@@ -69,6 +77,7 @@ def _record_to_info(record) -> ModelInfo:  # noqa: ANN001 — registry record
         classes=record.classes,
         params=record.params,
         size_mb=round(record.size_mb, 2),
+        path=str(record.path),
     )
 
 
@@ -114,6 +123,8 @@ def start_training(
             epochs=body.epochs,
             imgsz=body.imgsz,
             batch=body.batch,
+            name=body.name,
+            description=body.description,
         )
     except (ValueError, FileNotFoundError) as exc:
         raise HTTPException(
@@ -140,7 +151,9 @@ def connect_colab_session(
     works unchanged.
     """
     try:
-        job = manager.start_colab_job(body.tunnel_url)
+        job = manager.start_colab_job(
+            body.tunnel_url, name=body.name, description=body.description
+        )
     except ColabConnectError as exc:
         # ColabConnectError already carries clinician-readable text.
         raise HTTPException(
@@ -160,6 +173,35 @@ def get_training_job(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"job {job_id!r} not found",
         )
+    return _job_to_info(job)
+
+
+@router.patch("/{job_id}", response_model=TrainingJobInfo)
+def update_training_metadata(
+    job_id: str,
+    body: UpdateTrainingMetadataRequest,
+    manager: JobManager = Depends(get_job_manager),
+) -> TrainingJobInfo:
+    """Edit the name + description of an in-flight training run (F2).
+
+    Gated server-side to ``status in {queued, running}``; completed /
+    failed / cancelled runs return **409 Conflict** (the request is
+    well-formed — the run's lifecycle state just forbids the edit).
+    History edits will land in F3 once the persistent layer ships.
+    """
+    try:
+        job = manager.update_metadata(
+            job_id, name=body.name, description=body.description
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"job {job_id!r} not found",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     return _job_to_info(job)
 
 

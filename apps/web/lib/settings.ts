@@ -27,10 +27,27 @@ export interface AppSettings {
    * in memory: project_presets_revisit, deferred to P10).
    */
   show_presets: boolean;
+
+  /**
+   * Preferred timezone for every UI timestamp render (F2 §9).
+   *
+   * Special value `"system"` (default) means use whatever
+   * `Intl.DateTimeFormat().resolvedOptions().timeZone` reports —
+   * usually the OS-level zone. Any other value should be a valid
+   * IANA zone name (e.g. `"Asia/Kolkata"`, `"UTC"`,
+   * `"America/New_York"`) — the same set `Intl.supportedValuesOf
+   * ("timeZone")` returns.
+   *
+   * Every formatDate/formatRelative call in apps/web/lib/format-date.ts
+   * reads this setting; the run-name placeholder on /train/configure
+   * also reads it so the default name reflects the user's wall clock.
+   */
+  timezone: string;
 }
 
 const DEFAULTS: AppSettings = {
   show_presets: false,
+  timezone: "system",
 };
 
 const STORAGE_KEY = "vrl-yolo-gui.settings.v1";

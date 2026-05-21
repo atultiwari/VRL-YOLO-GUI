@@ -409,12 +409,38 @@ export async function saveTrainingToLibrary(
  */
 export async function connectColab(
   tunnelUrl: string,
+  opts: { name?: string; description?: string } = {},
 ): Promise<StartTrainingResponse> {
   return fetchJson(`${API_BASE}/training/colab/connect`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tunnel_url: tunnelUrl }),
+    body: JSON.stringify({
+      tunnel_url: tunnelUrl,
+      name: opts.name ?? "",
+      description: opts.description ?? "",
+    }),
   });
+}
+
+/**
+ * Edit a queued / running run's name + description. Backend rejects
+ * with 409 on completed/failed/cancelled runs (history edits land
+ * in F3). Pass `null` for a field to leave it as-is; pass empty
+ * string for `name` to reset to the auto-default; pass empty string
+ * for `description` to clear it.
+ */
+export async function updateTrainingMetadata(
+  jobId: string,
+  patch: { name?: string | null; description?: string | null },
+): Promise<TrainingJobInfo> {
+  return fetchJson(
+    `${API_BASE}/training/${encodeURIComponent(jobId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    },
+  );
 }
 
 /**

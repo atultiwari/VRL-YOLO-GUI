@@ -8,6 +8,7 @@ import {
   Cloud,
   Cpu,
   Database,
+  FileText,
   Gauge,
   Play,
   SlidersHorizontal,
@@ -37,7 +38,9 @@ import {
   fetchModels,
   startTraining,
 } from "@/lib/api";
+import { usePreferredTimezone } from "@/lib/format-date";
 import { useTrainStore, type TrainPreset } from "@/lib/train-store";
+import { defaultRunName } from "@/lib/training-defaults";
 import type { DatasetInfo, HardwareInfo } from "@/lib/types";
 import { cn, formatBytes } from "@/lib/utils";
 
@@ -85,6 +88,21 @@ export default function TrainConfigurePage() {
   } = useTrainStore();
   const [startError, setStartError] = useState<string | null>(null);
   const [colabModalOpen, setColabModalOpen] = useState(false);
+  // F2: run metadata. Empty `name` = "use the placeholder" (defaultRunName).
+  // Empty `description` = "no description set" (server clears).
+  const [runName, setRunName] = useState("");
+  const [runDescription, setRunDescription] = useState("");
+
+  // Live placeholder: rebuild every minute so the auto-generated
+  // <Task> · <stub> · YYYY-MM-DD HH:MM stays current. Also subscribes
+  // to the TZ setting via usePreferredTimezone() so changing TZ in
+  // Settings re-renders the placeholder.
+  const tz = usePreferredTimezone();
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => forceTick((n) => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   // If we got here without a dataset (e.g. fresh tab, store hydrated but
   // dataset was cleared by a "Reset desktop storage"), redirect back.
@@ -154,6 +172,17 @@ export default function TrainConfigurePage() {
     label: `${m.name}  ·  ${m.num_classes} cls  ·  ${formatBytes(m.size_mb)}`,
   }));
 
+  // What name actually ships: the typed value when present, else the
+  // current placeholder (so the server stores the exact string the user
+  // saw in the field). Recomputed at submit time so the timestamp is
+  // accurate to the click.
+  const effectiveName = (): string => {
+    const trimmed = runName.trim();
+    if (trimmed) return trimmed;
+    if (!dataset) return "";
+    return defaultRunName(taskForUi, dataset.id, new Date(), { timeZone: tz });
+  };
+
   const start = useMutation({
     mutationFn: async () => {
       if (!dataset) throw new Error("no dataset");
@@ -164,6 +193,8 @@ export default function TrainConfigurePage() {
         epochs: hyperparams.epochs,
         imgsz: hyperparams.image_size,
         batch: hyperparams.batch_size,
+        name: effectiveName(),
+        description: runDescription.trim(),
       });
     },
     onSuccess: (res) => {
@@ -211,6 +242,59 @@ export default function TrainConfigurePage() {
           {taskForUi === "detect" ? (
             <ClassNamesEditor dataset={dataset} onDatasetChanged={setDataset} />
           ) : null}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="size-4 text-accent" />
+                Name this run <span className="text-xs font-normal text-ink-muted">(optional)</span>
+              </CardTitle>
+              <CardDescription>
+                Helps you find this run later in Models. Leave blank to
+                use the auto-generated default.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1">
+                <label
+                  htmlFor="run-name"
+                  className="text-xs font-medium uppercase tracking-wide text-ink-muted"
+                >
+                  Name
+                </label>
+                <input
+                  id="run-name"
+                  type="text"
+                  value={runName}
+                  onChange={(e) => setRunName(e.target.value)}
+                  maxLength={200}
+                  placeholder={defaultRunName(
+                    taskForUi,
+                    dataset.id,
+                    new Date(),
+                    { timeZone: tz },
+                  )}
+                  className="h-9 w-full rounded-md border border-surface-muted bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                />
+              </div>
+              <div className="space-y-1">
+                <label
+                  htmlFor="run-description"
+                  className="text-xs font-medium uppercase tracking-wide text-ink-muted"
+                >
+                  Description
+                </label>
+                <textarea
+                  id="run-description"
+                  value={runDescription}
+                  onChange={(e) => setRunDescription(e.target.value)}
+                  maxLength={2000}
+                  rows={3}
+                  placeholder="What's this run for? e.g. 'Try imgsz=320 on the partial lung dataset.'"
+                  className="w-full resize-y rounded-md border border-surface-muted bg-surface px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                />
+              </div>
+            </CardContent>
+          </Card>
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -352,6 +436,8 @@ export default function TrainConfigurePage() {
       {colabModalOpen ? (
         <ConnectColabModal
           task={taskForUi}
+          runName={effectiveName()}
+          runDescription={runDescription.trim()}
           onClose={() => setColabModalOpen(false)}
           onConnected={(jobId) => {
             setColabModalOpen(false);

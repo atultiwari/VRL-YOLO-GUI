@@ -11,10 +11,12 @@ import {
   Eye,
   LineChart as LineChartIcon,
   Loader2,
+  PencilLine,
   RotateCcw,
   Save,
   Sparkles,
   TerminalSquare,
+  X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -40,12 +42,19 @@ import {
 } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import {
+  ApiError,
   cancelTraining,
   getTrainingJob,
   saveTrainingToLibrary,
   setDefaultModel,
   trainingStreamUrl,
+  updateTrainingMetadata,
 } from "@/lib/api";
+import {
+  formatDate,
+  formatElapsed,
+  usePreferredTimezone,
+} from "@/lib/format-date";
 import { useTrainStore } from "@/lib/train-store";
 import type {
   ModelInfo,
@@ -110,6 +119,13 @@ export default function TrainRunPage() {
   const [connectionState, setConnectionState] = useState<
     "connecting" | "open" | "closed"
   >("connecting");
+  // F2: subscribe to TZ + per-run metadata editing.
+  const tz = usePreferredTimezone();
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
+  const [descPopoverOpen, setDescPopoverOpen] = useState(false);
+  const [descDraft, setDescDraft] = useState("");
   // Colab-only: the desktop-synthesised `connection` events surface
   // reconnect-with-backoff state between the desktop and the tunnel.
   // null when no banner needed.
@@ -326,6 +342,33 @@ export default function TrainRunPage() {
       ),
   });
 
+  // F2: live-edit name + description while the run is in flight.
+  // Server gates the PATCH at queued/running and returns 409 otherwise;
+  // we mirror the same gate client-side so the affordance simply doesn't
+  // show after the run hits a terminal state.
+  const updateMeta = useMutation({
+    mutationFn: async (patch: {
+      name?: string | null;
+      description?: string | null;
+    }) => {
+      if (!activeJobId) throw new Error("no active job");
+      return updateTrainingMetadata(activeJobId, patch);
+    },
+    onSuccess: (job) => {
+      setSnapshot(job);
+      setEditError(null);
+    },
+    onError: (err) => {
+      setEditError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Could not update",
+      );
+    },
+  });
+
   const onTrainAnother = () => {
     setActiveJob(null);
     router.push("/train");
@@ -353,20 +396,128 @@ export default function TrainRunPage() {
 
   const statusBadge = STATUS_TONE[status];
 
+  const editingLocked = isTerminal;
+  const elapsedSeconds = snapshot
+    ? Math.max(
+        0,
+        Math.floor(
+          ((snapshot.finished_at
+            ? new Date(snapshot.finished_at).getTime()
+            : Date.now()) -
+            new Date(snapshot.started_at).getTime()) /
+            1000,
+        ),
+      )
+    : 0;
+
   return (
     <section className="flex h-full flex-col gap-8 px-12 py-12">
-      <header className="flex items-end justify-between gap-4">
-        <div>
+      <header className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-medium uppercase tracking-[0.2em] text-ink-muted">
             Train · live run
           </p>
-          <h1 className="mt-2 text-4xl font-semibold tracking-tight">
-            {statusLabel(status)}
-          </h1>
-          <p className="mt-3 max-w-3xl text-ink-muted">
+          {/* F2: run name with inline edit. Locked once status is terminal. */}
+          {isEditingName ? (
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                autoFocus
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                maxLength={200}
+                disabled={updateMeta.isPending}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    updateMeta.mutate({ name: nameDraft.trim() });
+                    setIsEditingName(false);
+                  }
+                  if (e.key === "Escape") {
+                    setIsEditingName(false);
+                    setEditError(null);
+                  }
+                }}
+                className="flex-1 rounded-md border border-surface-muted bg-surface px-3 py-2 text-2xl font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+              />
+              <Button
+                size="sm"
+                disabled={updateMeta.isPending}
+                onClick={() => {
+                  updateMeta.mutate({ name: nameDraft.trim() });
+                  setIsEditingName(false);
+                }}
+              >
+                <Check className="size-4" /> Save
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={updateMeta.isPending}
+                onClick={() => {
+                  setIsEditingName(false);
+                  setEditError(null);
+                }}
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+          ) : (
+            <h1 className="mt-2 flex items-center gap-2 text-2xl font-semibold tracking-tight">
+              <span className="truncate" title={snapshot?.name ?? ""}>
+                {snapshot?.name || statusLabel(status)}
+              </span>
+              {!editingLocked && snapshot ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNameDraft(snapshot.name);
+                    setIsEditingName(true);
+                    setEditError(null);
+                  }}
+                  title="Rename this run"
+                  className="rounded-md p-1 text-ink-muted hover:bg-surface-muted hover:text-ink"
+                >
+                  <PencilLine className="size-4" />
+                </button>
+              ) : null}
+            </h1>
+          )}
+          {/* Description: italic line + edit popover trigger. */}
+          {snapshot ? (
+            <div className="mt-1 flex items-center gap-2">
+              <p
+                className="max-w-3xl text-sm italic text-ink-muted"
+                title={snapshot.description || undefined}
+              >
+                {snapshot.description || (
+                  <span className="not-italic opacity-60">
+                    No description.
+                  </span>
+                )}
+              </p>
+              {!editingLocked ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDescDraft(snapshot.description);
+                    setDescPopoverOpen(true);
+                    setEditError(null);
+                  }}
+                  title="Edit description"
+                  className="rounded-md p-1 text-ink-muted hover:bg-surface-muted hover:text-ink"
+                >
+                  <PencilLine className="size-3.5" />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {/* Status + metadata + timestamps row. */}
+          <p className="mt-3 max-w-3xl text-sm text-ink-muted">
             {snapshot ? (
               <>
-                Job{" "}
+                <span className="font-medium text-ink">
+                  {statusLabel(status)}
+                </span>
+                {" · Job "}
                 <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">
                   {snapshot.job_id.slice(0, 8)}
                 </code>
@@ -375,13 +526,44 @@ export default function TrainRunPage() {
                 {" · "}
                 {snapshot.accelerator_kind.toUpperCase()}
                 {dataset ? ` · ${dataset.classes.length} classes` : ""}
+                <br />
+                <span className="font-medium text-ink">Started</span>{" "}
+                {formatDate(snapshot.started_at, { timeZone: tz })}
+                {snapshot.finished_at ? (
+                  <>
+                    {" · "}
+                    <span className="font-medium text-ink">Finished</span>{" "}
+                    {formatDate(snapshot.finished_at, { timeZone: tz })}
+                    {" · "}
+                    <span className="font-medium text-ink">Elapsed</span>{" "}
+                    {formatElapsed(elapsedSeconds)}
+                  </>
+                ) : (
+                  <>
+                    {" · "}
+                    <span className="font-medium text-ink">Elapsed</span>{" "}
+                    {formatElapsed(elapsedSeconds)}
+                  </>
+                )}
               </>
             ) : (
               "Connecting to training job…"
             )}
           </p>
+          {editingLocked && snapshot ? (
+            <p className="mt-1 text-xs text-ink-muted/70">
+              Editing locked after the run finishes (re-enabled when history
+              persistence lands in F3).
+            </p>
+          ) : null}
+          {editError ? (
+            <div className="mt-2 flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-800">
+              <AlertTriangle className="size-3" />
+              {editError}
+            </div>
+          ) : null}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Badge tone={statusBadge.tone}>
             {status === "running" ? (
               <Loader2 className="mr-1 size-3 animate-spin" />
@@ -405,6 +587,67 @@ export default function TrainRunPage() {
           </Badge>
         </div>
       </header>
+
+      {descPopoverOpen && snapshot ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !updateMeta.isPending)
+              setDescPopoverOpen(false);
+          }}
+        >
+          <Card className="w-full max-w-lg">
+            <CardHeader>
+              <CardTitle>Edit description</CardTitle>
+              <CardDescription>
+                Free-text notes about this run. Saved to the live snapshot;
+                cleared by emptying the field.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <textarea
+                autoFocus
+                value={descDraft}
+                onChange={(e) => setDescDraft(e.target.value)}
+                maxLength={2000}
+                rows={6}
+                placeholder="e.g. Try imgsz=320 on the partial lung dataset."
+                className="w-full resize-y rounded-md border border-surface-muted bg-surface px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+              />
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={updateMeta.isPending}
+                  onClick={() => setDescPopoverOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={updateMeta.isPending}
+                  onClick={() => {
+                    updateMeta.mutate({ description: descDraft });
+                    setDescPopoverOpen(false);
+                  }}
+                >
+                  {updateMeta.isPending ? (
+                    <>
+                      <Spinner /> Saving…
+                    </>
+                  ) : (
+                    <>
+                      <Check className="size-4" /> Save
+                    </>
+                  )}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
 
       {colabConnection ? (
         <ColabConnectionBanner state={colabConnection} />

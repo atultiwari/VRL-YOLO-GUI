@@ -245,7 +245,12 @@ def test_save_to_library_downloads_best_pt(fake_tunnel, tmp_path: Path) -> None:
         pass
 
     dest = tmp_path / "models" / "detect"
-    files = list(dest.glob("trained-*.pt")) if dest.is_dir() else []
+    # F2: filename is now the slugified job name (e.g.
+    # `Detect-d6a1bf57-2026-05-21-15-30.pt`) instead of the old
+    # `trained-<stub>.pt` shape. Glob any .pt to stay agnostic to the
+    # exact default-name format — full slug semantics are exercised
+    # in tests/test_training_naming.py.
+    files = list(dest.glob("*.pt")) if dest.is_dir() else []
     assert files, "best.pt was not copied into models/detect/"
     assert files[0].read_bytes() == b"\x00" * 4096
 

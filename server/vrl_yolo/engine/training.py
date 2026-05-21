@@ -35,6 +35,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from slugify import slugify as _slugify_lib
+
 from vrl_yolo.engine.colab import (
     ColabConnectError,
     ColabSession,
@@ -56,6 +58,47 @@ _MAIN_PY = Path(__file__).resolve().parents[3] / "src-pyloid" / "main.py"
 
 JobStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 JobTask = Literal["detect", "classify"]
+
+
+def _slugify_run_name(name: str) -> str:
+    """Filesystem-safe slug, preserving Unicode for non-Latin names.
+
+    Returns the empty string for input that slugifies to nothing
+    (e.g. pure punctuation). Callers fall back to the legacy
+    ``trained-<job_id[:8]>.pt`` naming in that case.
+
+    `allow_unicode=True` keeps Devanagari / Han / Cyrillic / etc.
+    characters intact instead of transliterating to ASCII — that's
+    the F2 decision to support clinicians naming runs in their own
+    script. `lowercase=False` preserves case (script-significant in
+    some languages; harmless for ASCII).
+    """
+    return _slugify_lib(
+        name.strip(),
+        max_length=80,
+        word_boundary=True,
+        allow_unicode=True,
+        lowercase=False,
+    )
+
+
+def _default_run_name(task: JobTask, dataset_id: str, when: datetime) -> str:
+    """Auto-generated training-run name per F2 §1 decision 1.
+
+    Format: ``<Task> · <dataset-id-stub> · YYYY-MM-DD HH:MM``.
+
+    ``when`` is whatever the caller passes — usually
+    ``datetime.now(timezone.utc)`` from ``JobManager.start()``. The
+    backend formats in *local* system TZ via ``astimezone()`` so
+    the placeholder matches a wall clock. UI-driven calls
+    pre-compute the name client-side using the user's preferred TZ
+    from settings; this fallback only fires for direct API callers
+    that send an empty name.
+    """
+    task_label = "Detect" if task == "detect" else "Classify"
+    stub = dataset_id[:8]
+    local = when.astimezone()
+    return f"{task_label} · {stub} · {local:%Y-%m-%d %H:%M}"
 
 # Fields that flow through the metrics wire shape — kept as a single flat
 # dataclass so the existing TrainingMetrics schema stays one Pydantic model
@@ -112,6 +155,12 @@ class TrainingJob:
     output_dir: Path
     started_at: datetime
     status: JobStatus = "queued"
+    # Human-readable name + free-text description (F2). Stored as
+    # plain strings (`""` means "not set" — JobManager.start() fills
+    # the default before construction, so user-facing code sees a
+    # non-empty name everywhere).
+    name: str = ""
+    description: str = ""
     epoch_current: int = 0
     finished_at: datetime | None = None
     error_message: str | None = None
@@ -162,6 +211,8 @@ class TrainingJob:
         with self._lock:
             return {
                 "job_id": self.job_id,
+                "name": self.name,
+                "description": self.description,
                 "status": self.status,
                 "dataset_id": self.dataset_root.name,
                 "model": self.model,
@@ -221,6 +272,8 @@ class JobManager:
         epochs: int,
         imgsz: int,
         batch: int,
+        name: str = "",
+        description: str = "",
     ) -> TrainingJob:
         """Spawn a training subprocess + reader thread.
 
@@ -232,6 +285,11 @@ class JobManager:
         `task` decides the shape Ultralytics expects in `data=`:
         detect needs a `data.yaml` at the dataset root; classify points
         at the ImageFolder root with `train/<class>/*`.
+
+        ``name`` and ``description`` (F2) are optional run metadata.
+        Empty name falls back to ``_default_run_name(task, dataset_id,
+        started_at)`` so every job has a human-readable label even
+        when the caller didn't supply one.
         """
         if not dataset_root.is_dir():
             raise FileNotFoundError(f"dataset root not found: {dataset_root}")
@@ -261,6 +319,11 @@ class JobManager:
         accelerator = detect_accelerator()
         device_arg = None if accelerator.kind == "cpu" else accelerator.kind
 
+        started_at = datetime.now(timezone.utc)
+        final_name = name.strip() or _default_run_name(
+            task, dataset_root.name, started_at
+        )
+
         job = TrainingJob(
             job_id=job_id,
             dataset_root=dataset_root,
@@ -271,8 +334,10 @@ class JobManager:
             batch=batch,
             accelerator_kind=accelerator.kind,
             output_dir=output_dir,
-            started_at=datetime.now(timezone.utc),
+            started_at=started_at,
             status="running",
+            name=final_name,
+            description=description.strip(),
         )
 
         # CRITICAL: in a frozen PyInstaller .app, `sys.executable` is the
@@ -366,12 +431,23 @@ class JobManager:
         reader.start()
         return job
 
-    def start_colab_job(self, tunnel_url: str) -> TrainingJob:
+    def start_colab_job(
+        self,
+        tunnel_url: str,
+        *,
+        name: str = "",
+        description: str = "",
+    ) -> TrainingJob:
         """Connect to a Colab worker, seed a TrainingJob, spawn a WS reader.
 
         The remote session does the actual training; we just translate
         its event stream into ``job.events`` so ``/train/run`` and the
         existing WebSocket fan-out work unchanged.
+
+        ``name`` and ``description`` (F2) are optional run metadata.
+        Empty name falls back to ``_default_run_name(task, dataset_id,
+        started_at)`` — same fallback shape as the local ``start()``
+        path so Colab jobs get the same human-readable defaults.
 
         Raises ``ColabConnectError`` (re-raised from ``colab.connect``)
         on URL / pre-flight failures so the route layer can surface a
@@ -403,6 +479,13 @@ class JobManager:
         }
         seeded_status: JobStatus = status_map.get(init.status, "running")
 
+        started_at = datetime.now(timezone.utc)
+        final_name = name.strip() or _default_run_name(
+            init.task,  # type: ignore[arg-type]
+            synthetic_root.name,
+            started_at,
+        )
+
         job = TrainingJob(
             job_id=job_id,
             dataset_root=synthetic_root,
@@ -413,9 +496,11 @@ class JobManager:
             batch=init.batch,
             accelerator_kind="colab",
             output_dir=output_dir,
-            started_at=datetime.now(timezone.utc),
+            started_at=started_at,
             status=seeded_status,
             epoch_current=init.epoch,
+            name=final_name,
+            description=description.strip(),
         )
         job._colab_session = session
         job._reader_stop_event = threading.Event()
@@ -479,14 +564,67 @@ class JobManager:
         # "completed" if the process raced past SIGTERM) is accurate.
         return True
 
+    def update_metadata(
+        self,
+        job_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> TrainingJob:
+        """Edit a run's name + description while it's still in flight.
+
+        Gated to ``status in {queued, running}`` — after a run
+        completes, edits need the F3 persistent-history layer to
+        land somewhere durable. Until F3 ships, completed runs are
+        read-only (route maps ValueError → 409).
+
+        Field semantics:
+        - ``None`` (either field) = "leave as-is" (caller didn't
+          touch it).
+        - Empty / whitespace-only ``description`` = clear it.
+        - Empty / whitespace-only ``name`` = reset to the
+          auto-generated default. Lets the user re-derive the
+          placeholder by clearing the field — matches the UI's
+          "blank means default" semantics.
+        """
+        job = self.get(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        with job._lock:
+            if job.status not in {"queued", "running"}:
+                raise ValueError(
+                    f"job is {job.status!r}; can only edit name/description "
+                    "on queued or running runs (history edits land in F3)"
+                )
+            if name is not None:
+                stripped = name.strip()
+                if not stripped:
+                    job.name = _default_run_name(
+                        job.task, job.dataset_root.name, job.started_at
+                    )
+                else:
+                    job.name = stripped[:200]
+            if description is not None:
+                job.description = description.strip()[:2000]
+        return job
+
     def save_to_library(
         self, job_id: str, *, registry: ModelRegistry
     ) -> Path:
         """Copy a completed job's best.pt into the user models directory.
 
-        Filename: `<run-name>.pt` (which is the job_id) — keeps it
-        unique. After copy we trigger `registry.scan()` so the new
-        model shows up in /models with `source: "trained"`.
+        Filename derivation (F2):
+        - Slugify the current ``job.name`` (preserves Unicode,
+          replaces whitespace + punctuation with `-`, caps at 80
+          chars).
+        - On slug collision with an existing file in the destination
+          dir, suffix with ``-<job_id[:8]>`` so neither file
+          overwrites the other.
+        - If the name slugifies to empty (pure punctuation), fall
+          back to the legacy ``trained-<job_id[:8]>.pt`` naming.
+
+        After the copy we trigger ``registry.scan()`` so the new
+        model shows up in /models with ``source: "trained"``.
         """
         job = self.get(job_id)
         if job is None:
@@ -516,9 +654,24 @@ class JobManager:
         # models/classify/ — matching how the registry discovers them.
         dest_dir = registry._user_dir / job.task  # type: ignore[attr-defined]
         dest_dir.mkdir(parents=True, exist_ok=True)
-        # Suffix the model name with a short job stub for traceability.
-        run_label = f"trained-{job_id[:8]}.pt"
+
+        slug = _slugify_run_name(job.name)
+        if not slug:
+            # Defensive: every job gets a default name in start(), so
+            # this branch only fires if a caller patched name to a
+            # punctuation-only string. Keeps the legacy filename so
+            # /models still has *something* to render.
+            run_label = f"trained-{job_id[:8]}.pt"
+        else:
+            run_label = f"{slug}.pt"
         dest = dest_dir / run_label
+        if dest.exists():
+            # Two completed runs picked the same slug (typical: both
+            # accepted the auto-generated default and were started in
+            # the same minute). Disambiguate so neither overwrites.
+            stem = Path(run_label).stem
+            run_label = f"{stem}-{job_id[:8]}.pt"
+            dest = dest_dir / run_label
         shutil.copy2(job.best_pt, dest)
         registry.scan()
         return dest

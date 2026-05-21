@@ -263,6 +263,12 @@ class StartTrainingRequest(BaseModel):
     epochs: int = Field(50, ge=1, le=2000)
     imgsz: int = Field(640, ge=64, le=2048)
     batch: int = Field(8, ge=1, le=128)
+    # F2: optional human-readable run metadata. Both default to empty;
+    # backend fills in a default name from <Task> · <dataset-stub> ·
+    # local-time when `name` is empty. UI-driven calls pre-compute the
+    # name client-side using the user's preferred TZ from settings.
+    name: str = Field("", max_length=200)
+    description: str = Field("", max_length=2000)
 
 
 class TrainingMetrics(BaseModel):
@@ -290,6 +296,11 @@ class TrainingMetrics(BaseModel):
 
 class TrainingJobInfo(BaseModel):
     job_id: str
+    # F2: human-readable run metadata. Always populated — JobManager.start()
+    # fills `name` from the default-name helper when the caller didn't
+    # supply one, so the UI never sees an empty string here.
+    name: str = ""
+    description: str = ""
     status: TrainingStatus
     dataset_id: str
     model: str
@@ -323,7 +334,32 @@ class ColabConnectRequest(BaseModel):
     """
 
     tunnel_url: str = Field(..., min_length=10, max_length=2048)
+    # F2: optional run metadata, same shape + semantics as the local
+    # StartTrainingRequest. Lets the user name a Colab-backed run
+    # from /train/configure before pasting the tunnel URL.
+    name: str = Field("", max_length=200)
+    description: str = Field("", max_length=2000)
 
 
 class ColabConnectResponse(BaseModel):
     job_id: str
+
+
+class UpdateTrainingMetadataRequest(BaseModel):
+    """Body for `PATCH /api/training/{job_id}` — F2.
+
+    Edit a run's name + description while it's in flight. Gated
+    server-side to ``status in {queued, running}``; completed /
+    failed / cancelled runs return 409 (history edits land in F3).
+
+    Field semantics:
+    - ``None`` (either field) means "don't touch this field." Pass
+      only what's changing.
+    - Empty string for ``description`` clears it.
+    - Empty string for ``name`` resets to the auto-generated default
+      (so the user can re-derive the placeholder by clearing the
+      field).
+    """
+
+    name: str | None = Field(None, max_length=200)
+    description: str | None = Field(None, max_length=2000)

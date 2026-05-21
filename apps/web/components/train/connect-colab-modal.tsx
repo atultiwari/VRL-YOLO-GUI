@@ -26,6 +26,9 @@ export interface ConnectColabModalProps {
   task: "detect" | "classify";
   onClose: () => void;
   onConnected: (jobId: string) => void;
+  /** F2: run metadata to send with the connect call. */
+  runName?: string;
+  runDescription?: string;
 }
 
 // Github-anchored Colab URLs (signed off in docs/PLAN-P6.md §4.4) — they
@@ -42,13 +45,19 @@ export function ConnectColabModal({
   task,
   onClose,
   onConnected,
+  runName,
+  runDescription,
 }: ConnectColabModalProps) {
   const [tunnelUrl, setTunnelUrl] = useState("");
   const [copied, setCopied] = useState(false);
   const notebookUrl = NOTEBOOK_URLS[task];
 
   const connect = useMutation({
-    mutationFn: async () => connectColab(tunnelUrl.trim()),
+    mutationFn: async () =>
+      connectColab(tunnelUrl.trim(), {
+        name: runName,
+        description: runDescription,
+      }),
     onSuccess: (res) => onConnected(res.job_id),
   });
 

@@ -41,13 +41,41 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.11.0",
+    phase: "F2",
+    title: "Training-run name + description + app-wide timezone setting",
+    tag: "v0.11-f2-run-naming",
+    commit: "PENDING",
+    date: "2026-05-21",
+    status: "current",
+    features: [
+      "**Optional Name + Description on every training run.** New 'Name this run' card on `/train/configure` sits above the Model & preset card. Name is a single-line input (max 200 chars) with a **live placeholder** showing the auto-generated default — `<Task> · <dataset-stub> · YYYY-MM-DD HH:MM` in the user's preferred TZ — that rebuilds when task or dataset change (and ticks forward every 60 s so the timestamp stays current). Description is a multi-line textarea (max 2000 chars). Both flow through to `POST /api/training/start` and `POST /api/training/colab/connect`; backend `JobManager.start()` + `start_colab_job()` accept `name` + `description` kwargs and fall back to `_default_run_name()` when empty.",
+      "**Inline name + description editing on `/train/run`** while the run is in flight. Run name replaces statusLabel as the page's h1. Pencil icon next to the name → inline input → Enter or Save commits via `PATCH /api/training/{id}`. Description shows below the name as italic text; a separate pencil opens a popover modal with a textarea. Both edit affordances disappear once `status` is terminal, replaced with a grey hint pointing at F3 for completed-run history edits.",
+      "**Started / Finished / Elapsed timestamps on `/train/run`.** All three render through the new `formatDate()` + `formatElapsed()` helpers in `apps/web/lib/format-date.ts` so they respect the user's TZ setting.",
+      "**New `PATCH /api/training/{job_id}`** route + `UpdateTrainingMetadataRequest` schema + `JobManager.update_metadata()` method. Gated to `status in {queued, running}` — completed/failed/cancelled jobs return **409 Conflict** (the request is well-formed; the resource state forbids the edit). Empty string for `name` resets to the auto-default; empty string for `description` clears it; `None` for either field means 'don't touch'.",
+      "**Filename derivation from the run name on save-to-library.** `JobManager.save_to_library()` now slugifies `job.name` and saves as `<slug>.pt` instead of the old `trained-<stub>.pt`. Falls back to the legacy shape when the slug comes out empty. Disambiguates name collisions with `-<job_id[:8]>` so no two saves overwrite each other. A clinician saving 20 trained classify runs now sees meaningful names in `/models` instead of `trained-9b3a1c4e.pt` × 20.",
+      "**Unicode-safe naming via `python-slugify>=8.0`** (new base dep). Slugify runs with `allow_unicode=True` and `lowercase=False` so a run named `\"फेफड़े वर्गीकरण\"` becomes a filename with the Devanagari preserved (not transliterated to `phephre-vargikaran`). Case is preserved too so `\"Lung Classify Run\"` → `Lung-Classify-Run.pt`.",
+      "**App-wide timezone setting (wide scope, F2 §9).** New 'Timezone' section in `/settings` with a system-default radio (auto-detected zone shown beneath) + a custom-zone radio with a searchable IANA combobox populated from `Intl.supportedValuesOf('timeZone')` (~420 zones). Live preview shows the current time in the selected zone. Every timestamp render in the UI — configure placeholder, `/train/run` Started/Finished, future surfaces — routes through `apps/web/lib/format-date.ts` and reads this setting. `usePreferredTimezone()` hook subscribes components to changes so the UI repaints without a page refresh.",
+      "**22 new backend tests** in `tests/test_training_naming.py` covering helpers, dataclass snapshot, manager update_metadata semantics, PATCH route mapping, save-to-library slug derivation (Unicode + empty fallback + collision disambiguation), and both training-start + colab-connect routes accepting the new fields. Synthetic JobManager fixtures — no subprocesses, no real ultralytics. All 58 backend tests green.",
+    ],
+    fixes: [
+      "**`POST /api/training/{id}/save-to-library` 500'd with a pydantic `ValidationError: path Field required`** since v0.10.0 / F1. The training router has its own `_record_to_info()` helper that wasn't updated when F1 added the new `path` field to `ModelInfo`. The existing `test_save_to_library_downloads_best_pt` in the Colab smoke tests wrapped the save call in a broad `except Exception: pass`, silently swallowing this validation error — that's why CI never caught it. Fixed with a one-line `path=str(record.path)` addition + an in-line comment about the duplication, plus a new regression test `test_save_to_library_route_returns_valid_model_info` that hits the route end-to-end and asserts the response is a validatable ModelInfo. Caught by the user during F2 manual verification.",
+    ],
+    knownLimitations: [
+      "Editing name / description on a completed run is intentionally blocked (PATCH returns 409). Re-enables when F3's persistent training-history layer lands — the edit needs somewhere durable to live, not in-memory `JobManager` state that disappears at app quit.",
+      "No keyboard shortcut to open the description popover — click-only for now. Add `e` as a hint when F3's history page introduces multiple per-row edit affordances.",
+      "Timezone setting doesn't trigger a `formatRelative()` rebuild on the second. Relative labels ('3 min ago') update lazily on the next render. Acceptable for v1; revisit if pilot users notice stale 'ago' labels.",
+      "The two `_record_to_info()` helpers in `routers/models.py` and `routers/training.py` are still duplicated, with a warning comment in both. Tolerable for now (8-line helper, low change rate), but worth de-duplicating into a shared helper module the next time `ModelInfo` gains another field.",
+    ],
+  },
+  {
     version: "0.10.0",
     phase: "F1",
     title: "Models library: delete + reveal on disk + path on every card",
     tag: "v0.10-f1-models-polish",
     commit: "788dee3",
     date: "2026-05-21",
-    status: "current",
+    status: "shipped",
     features: [
       "**Delete user-imported or locally-trained checkpoints from the library.** `DELETE /api/models/{name}` route + `ModelRegistry.delete(name)`. Hard-delete (macOS Finder Trash is the system safety net; `models/` lives under `~/Library/Application Support/`). Bundled weights are rejected with **HTTP 403** ('read-only — they live in the install tree and `scripts/fetch-models.py` would re-fetch them anyway') rather than 400, so the frontend can distinguish policy-rejected from malformed. Deleting a model that's the per-task default drops its entry from `defaults.json` and `get_defaults()` falls back to any remaining model of the right task on the next read.",
       "**Reveal a checkpoint in the OS file manager.** `POST /api/models/{name}/reveal`. Lives on the backend because the QtWebEngine renderer is sandboxed — it can't spawn `open` / `explorer` / `xdg-open`. Per-OS dispatch: macOS `open -R '<path>'` (selects in Finder), Windows `explorer /select,<path>` (selects in Explorer — no space after the comma), Linux `xdg-open <parent_dir>` (containing folder, since xdg-open has no /select equivalent). `subprocess.run(check=False)` so a non-zero file-manager exit doesn't fail the request.",

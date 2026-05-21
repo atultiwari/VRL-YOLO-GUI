@@ -1,6 +1,7 @@
 "use client";
 
-import { RotateCcw, SlidersHorizontal } from "lucide-react";
+import { Clock, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -10,8 +11,137 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { formatDate, resolveTimezone } from "@/lib/format-date";
 import { useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
+
+function detectSystemTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+function listIanaTimezones(): string[] {
+  try {
+    // Available in modern Chromium/QtWebEngine — returns ~420 zones.
+    type IntlWithSupported = typeof Intl & {
+      supportedValuesOf?: (key: string) => string[];
+    };
+    const fn = (Intl as IntlWithSupported).supportedValuesOf;
+    if (fn) return fn("timeZone");
+  } catch {
+    /* fall through to the curated fallback */
+  }
+  // Conservative fallback if the environment is too old.
+  return [
+    "UTC",
+    "Asia/Kolkata",
+    "Asia/Tokyo",
+    "Asia/Singapore",
+    "Asia/Dubai",
+    "Europe/London",
+    "Europe/Berlin",
+    "America/New_York",
+    "America/Chicago",
+    "America/Los_Angeles",
+    "Australia/Sydney",
+  ];
+}
+
+function TimezoneSection({
+  timezone,
+  onChange,
+}: {
+  timezone: string;
+  onChange: (next: string) => void;
+}) {
+  const systemTz = useMemo(detectSystemTimezone, []);
+  const zones = useMemo(listIanaTimezones, []);
+  const usingSystem = timezone === "system";
+  const [filter, setFilter] = useState("");
+
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return zones;
+    return zones.filter((z) => z.toLowerCase().includes(q));
+  }, [filter, zones]);
+
+  const preview = formatDate(new Date(), {
+    timeZone: resolveTimezone(timezone),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Clock className="size-4 text-accent" />
+          Timezone
+        </CardTitle>
+        <CardDescription>
+          Every date and time the app shows — training-run timestamps,
+          changelog dates, the auto-generated run-name template — uses
+          this zone. The current time in your selected zone is{" "}
+          <span className="font-mono text-ink">{preview}</span>.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-surface-muted bg-surface p-3 transition hover:border-accent">
+          <input
+            type="radio"
+            checked={usingSystem}
+            onChange={() => onChange("system")}
+            className="mt-1 size-4 accent-accent"
+          />
+          <div className="flex flex-col gap-0.5">
+            <span className="text-sm font-medium text-ink">
+              Use system timezone
+            </span>
+            <span className="text-xs text-ink-muted">
+              Detected: <span className="font-mono">{systemTz}</span>
+            </span>
+          </div>
+        </label>
+
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-surface-muted bg-surface p-3 transition hover:border-accent">
+          <input
+            type="radio"
+            checked={!usingSystem}
+            onChange={() => onChange(timezone === "system" ? systemTz : timezone)}
+            className="mt-1 size-4 accent-accent"
+          />
+          <div className="flex flex-1 flex-col gap-2">
+            <span className="text-sm font-medium text-ink">
+              Use a different timezone
+            </span>
+            <input
+              type="text"
+              placeholder="Filter zones (e.g. kolkata, london)"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              disabled={usingSystem}
+              className="h-8 rounded-md border border-surface-muted bg-surface px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
+            />
+            <select
+              value={usingSystem ? systemTz : timezone}
+              onChange={(e) => onChange(e.target.value)}
+              disabled={usingSystem}
+              size={6}
+              className="h-40 w-full rounded-md border border-surface-muted bg-surface font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
+            >
+              {filtered.map((z) => (
+                <option key={z} value={z}>
+                  {z}
+                </option>
+              ))}
+            </select>
+          </div>
+        </label>
+      </CardContent>
+    </Card>
+  );
+}
 
 function ToggleRow({
   label,
@@ -96,6 +226,11 @@ export default function SettingsPage() {
             />
           </CardContent>
         </Card>
+
+        <TimezoneSection
+          timezone={settings.timezone}
+          onChange={(v) => setSetting("timezone", v)}
+        />
 
         <div className="flex justify-end">
           <Button variant="secondary" size="sm" onClick={reset}>

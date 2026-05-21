@@ -3,8 +3,8 @@
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones)
 > plus the post-v0.9 Future-Features chain in
 > [`docs/FUTURE-FEATURES.md`](FUTURE-FEATURES.md). Updated at the end of
-> each phase boundary. **Last edit: 2026-05-21 (F1 — Models library:
-> delete + reveal on disk + path on every card).**
+> each phase boundary. **Last edit: 2026-05-21 (F2 — Training-run name +
+> description + app-wide timezone setting).**
 >
 > **Known limitations and deferred work** live in
 > [`docs/CARRY-FORWARDS.md`](CARRY-FORWARDS.md) — full diagnoses + fix
@@ -40,15 +40,15 @@
 | **P6c — Polish: reconnect-with-backoff + fetch retry + pilot plan** | ✅ done | `v0.9-p6-train-colab` | `46c4092` |
 | P6.fix-1 — Run on Colab callout visible on all hardware kinds | ✅ done | `v0.9.1` | `b2dbe46` |
 | **F1 — Models library: delete + reveal + path on every card** | ✅ done | `v0.10-f1-models-polish` | `788dee3` |
-| F2 — Training-run name + description | ⏳ next | — | — |
-| F3 — Persistent training history | ⏳ pending (depends F2) | — | — |
+| **F2 — Training-run name + description + app-wide TZ setting** | ✅ done | `v0.11-f2-run-naming` | _SHA pending_ |
+| F3 — Persistent training history | ⏳ next (depends F2) | — | — |
 | F4 — Dataset library: reuse + grouping | ⏳ pending (depends F3) | — | — |
 | P7 — Polish | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at the F1 commit (`v0.10-f1-models-polish`). **F1 ships the first of the four post-v0.9 Future-Features items** from `docs/FUTURE-FEATURES.md` (planned in `docs/PLAN-F1.md`, signed off before any code landed). The remaining P-phases (P7 Polish, P8/P9 Packaging, P10 Pilot) are paused while the F-chain runs — user explicitly reordered before P7 starts. The real-world pilot test (`docs/PILOT-TEST.md`) hasn't been run yet — that's a clinician + dataset task, not a Claude task, and the gate for v1.0. **Next:** F2 — Training-run name + description.
+**Current head:** `main` at the F2 commit (`v0.11-f2-run-naming`). **F2 ships training-run name + description end-to-end + the app-wide TZ setting** (wide-scope decision per `docs/PLAN-F2.md` §9 — every UI timestamp now routes through `apps/web/lib/format-date.ts` so the user's preferred zone repaints everything). Also folds in a critical F1 regression fix (save-to-library 500'd since v0.10.0 because the training router has a duplicate `_record_to_info` that wasn't updated when F1 added the `path` field). All 58 backend tests + tsc green. Remaining P-phases (P7 Polish, P8/P9 Packaging, P10 Pilot) still paused while the F-chain runs. The real-world pilot test (`docs/PILOT-TEST.md`) hasn't been run yet — that's a clinician + dataset task, not a Claude task, and the gate for v1.0. **Next:** F3 — Persistent training history (depends F2; introduces SQLite for run + history persistence).
 
 ---
 
@@ -620,18 +620,57 @@ In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runne
 
 ---
 
-## Up next: F2 — Training-run name + description
+### ✅ F2 — Training-run name + description + app-wide TZ setting · `v0.11-f2-run-naming` · _SHA pending_
 
-**Estimated ½ day** per `docs/FUTURE-FEATURES.md` item 2. Smallest of the F-chain; foundation for F3.
+**Trigger:** second of the four post-v0.9 Future-Features items from `docs/FUTURE-FEATURES.md`, planned in `docs/PLAN-F2.md` with 8 decisions signed off in two rounds: (1) default name format `<Task> · <dataset-stub> · YYYY-MM-DD HH:MM`; (2) `python-slugify` dep for Unicode names; (3) 409 Conflict for PATCH on completed runs; (4) `astimezone()` for default name + add app-wide timezone setting; (5) preserve case in slug; (6) 2000-char description cap; (7) live placeholder rebuilds on task/dataset change; (8) popover for description-edit on `/train/run`.
 
-- Optional **Name** and **Description** fields on `/train/configure`. Name defaults auto-generated (`<Task> · <dataset-id-stub> · YYYY-MM-DD HH:MM` or similar — open decision in the F2 plan).
-- `TrainingJob` dataclass + `JobManager.start()` accept `name` + `description`; both surfaced in `snapshot()`.
-- Save-to-library uses the slugified name when present, falling back to `trained-<job_id[:8]>.pt` when empty. Suffix with `-<job_id[:8]>` on name collisions.
-- `PATCH /api/training/jobs/{id}` to edit post-hoc — live editing while the run is in flight; later edits flow to F3's history record.
+**Scope shipped:**
 
-**Open decisions for F2 sign-off** (before code): default-name format, slug strategy (`_slugify` helper rolled here vs adding python-slugify dep).
+| # | Subject | Outcome |
+|---|---|---|
+| F2.1 | `python-slugify>=8.0` added as a base dep | New row in `pyproject.toml`. Pure-Python, ~30 KB install. Bundled in every release wheel so the slugify path doesn't require the `ml` extra. |
+| F2.2 | `_slugify_run_name()` + `_default_run_name()` helpers in `engine/training.py` | Slugify: `allow_unicode=True`, `lowercase=False`, `max_length=80`, `word_boundary=True` — preserves Devanagari / Han / Cyrillic / etc. instead of transliterating; preserves case so `"Lung Classify Run"` → `Lung-Classify-Run`; returns `""` for pure punctuation. Default-name: `<Task> · <dataset-id-stub> · YYYY-MM-DD HH:MM` via `when.astimezone()` (system local TZ as fallback when called server-side). |
+| F2.3 | `TrainingJob.name` + `.description` fields | Plain `str` defaults to `""`; populated by `JobManager.start()` before construction so user-facing code always sees a non-empty name. `snapshot()` surfaces both at the top of the dict. |
+| F2.4 | `JobManager.start()` + `start_colab_job()` accept name + description | Empty `name` falls back to `_default_run_name(task, dataset_id, started_at)`. Same shape for both code paths — Colab jobs get the same default treatment. |
+| F2.5 | `JobManager.update_metadata(job_id, *, name, description)` | New method. `None` for either field = "don't touch"; empty string for `description` = clear it; empty string for `name` = reset to the auto-default. Gated to `status in {queued, running}` — raises `ValueError` on terminal states (route maps to 409). |
+| F2.6 | `JobManager.save_to_library()` filename derivation | Was `trained-<stub>.pt`. Now `<slug>.pt` from the slugified job name. Falls back to the legacy shape if the slug comes out empty. On collision with an existing file, suffixes with `-<job_id[:8]>` so neither file overwrites — typical when two runs accepted the same default-derived name within the same minute. |
+| F2.7 | Schemas: `StartTrainingRequest` + `ColabConnectRequest` + `TrainingJobInfo` + new `UpdateTrainingMetadataRequest` | Two new optional fields on the start + connect bodies (max 200 / 2000 chars); two new always-present fields on the info response (defaults to `""`); new PATCH body type with `Optional[str]` semantics so callers can patch one field without touching the other. |
+| F2.8 | New route: `PATCH /api/training/{job_id}` | Returns 200 + the updated `TrainingJobInfo`, 404 if unknown, **409 Conflict** if the job's lifecycle state forbids the edit (run already completed/failed/cancelled). 409 over 403 because the request itself is well-formed — it's the resource state that says no. |
+| F2.9 | Frontend types + API helpers | `TrainingJobInfo` interface gains `name` + `description`; `StartTrainingBody` gains optional name + description; `connectColab()` second arg is now `{name?, description?}`; new `updateTrainingMetadata(jobId, patch)` helper using PATCH. `ConnectColabModal` passes `runName` + `runDescription` props through to the connect call. |
+| F2.10 | `apps/web/lib/format-date.ts` | New shared formatting helpers: `formatDate(iso, {dateStyle, timeStyle, timeZone})`, `formatTrainingTimestamp(iso)` (uses sv-SE locale for stable `YYYY-MM-DD HH:MM` shape), `formatRelative(iso)` ("3 min ago" / "yesterday"), `formatElapsed(seconds)`. All read the TZ setting; `usePreferredTimezone()` hook lets components subscribe to setting changes so they re-render when the user picks a new zone. |
+| F2.11 | `apps/web/lib/training-defaults.ts` | Client mirror of `_default_run_name()`. Used by `/train/configure` for the live placeholder. Same `<Task> · <dataset-stub> · YYYY-MM-DD HH:MM` shape — the timestamp passes through `formatTrainingTimestamp` so it respects the TZ setting. |
+| F2.12 | `/settings` — new Timezone section | System-default radio (auto-detected zone shown beneath) + custom-zone radio with a searchable IANA combobox populated from `Intl.supportedValuesOf('timeZone')` (~420 zones; curated 11-zone fallback for older environments). Live preview shows current time in the selected zone. Persists to `localStorage` under `settings.timezone` as either `"system"` or an IANA zone string. |
+| F2.13 | `/train/configure` — Name + Description card | New "Name this run" card above the Model & preset card with a Name input (live placeholder via `defaultRunName(task, dataset.id, new Date(), {timeZone})`) + Description textarea. `useEffect` ticks every 60 s so the placeholder timestamp stays current; rebuilds when task / dataset / TZ change. `effectiveName()` helper computes the value at submit time (typed value or current placeholder) so the server stores the exact string the user saw. Both pass through to `startTraining({...})` and `ConnectColabModal` via the new props. |
+| F2.14 | `/train/run` — name h1 + inline edit + description popover + Started/Finished/Elapsed | Run name replaces statusLabel as the page's h1. Pencil icon next to name → inline input with Enter-to-save / Escape-to-cancel; calls `updateTrainingMetadata({name})`. Description shows italic below the name; pencil opens an inline modal popover (built from existing Card + fixed backdrop, same pattern as ConnectColabModal — no new dependency). `updateMeta` mutation handles both. Edit affordances hide once `isTerminal`; "Editing locked after the run finishes (re-enabled when history persistence lands in F3)." hint appears. Status line below shows `Started <ts> · Elapsed Xm Ys` during the run; after completion, `Started · Finished · Elapsed`. All timestamps via `formatDate()` + `formatElapsed()` so they respect the TZ setting. |
+| F2.15 | Tests: `tests/test_training_naming.py` | 22 new backend tests including the regression test for the F1 save-to-library bug. Synthetic JobManager fixtures (hand-built TrainingJob instances injected into `manager._jobs`) so no subprocesses spawn and the suite runs in <0.5 s. All 58 project tests green. |
+| F2.16 | Verification | Curled all new routes against the running binary: PATCH unknown → 404; POST `/start` with name + description → reaches dataset-lookup stage (validation passed); POST `/colab/connect` with name + description → reaches pre-flight stage (validation passed). User manually verified the configure card, the run-page edits, save-to-library producing the slug-derived filename. App boots and shuts down cleanly throughout. |
 
-**Phase tag at completion:** `v0.11-f2-run-naming`.
+**F1 regression also fixed in this release:**
+
+`POST /api/training/{id}/save-to-library` was 500'ing with a pydantic `ValidationError: path Field required` since v0.10.0 / F1. The training router has its own `_record_to_info()` helper at `routers/training.py:66` that wasn't updated when F1 added the new `path` field to `ModelInfo`. The existing `test_save_to_library_downloads_best_pt` in the Colab smoke tests wraps the save call in a broad `except Exception: pass` (originally to tolerate a dummy-checkpoint registry-scan failure), which silently swallowed the validation error too — that's why CI never caught it. One-line fix (`path=str(record.path)` added to the duplicate helper) + an in-line comment warning about the duplication, plus a new end-to-end regression test (`test_save_to_library_route_returns_valid_model_info` in `tests/test_training_naming.py`) that hits the route and asserts the response is a validatable `ModelInfo`. Caught by the user during F2 manual verification when saving a trained `WBC-Yolov26-Final` model.
+
+**Carried-forward:**
+- **Editing name / description on a completed run is intentionally blocked.** PATCH returns 409 with a clinician-readable message pointing at F3. Re-enables when F3's persistent training-history layer lands — the edit needs somewhere durable to live, not in-memory `JobManager` state that disappears at app quit.
+- **No keyboard shortcut to open the description popover.** Click-only for now. Add `e` as a hint when F3's history page introduces multiple per-row edit affordances.
+- **Timezone setting doesn't trigger a `formatRelative()` rebuild on the second.** Relative labels (`"3 min ago"`) update lazily on the next render. Acceptable for v1; revisit if pilot users notice stale "ago" labels.
+- **The two `_record_to_info()` helpers in `routers/models.py` and `routers/training.py` are still duplicated**, with a warning comment in both. Tolerable for now (8-line helper, low change rate), but worth de-duplicating into a shared helper module the next time `ModelInfo` gains another field.
+
+---
+
+## Up next: F3 — Persistent training history
+
+**Estimated medium (3–5 days)** per `docs/FUTURE-FEATURES.md` item 3. The biggest single piece of the F-chain — introduces SQLite as the first real persistence dependency in `server/vrl_yolo/`. Foundation for F4 (the dataset library lists "last_used_at" + "run_count" which come straight off F3's history rows).
+
+- SQLite at `<storage_root>/training.db` — schema versioned via a hand-rolled `schema_version` int + migration list (Alembic is overkill for a 1-table schema; switch if it grows past 4–5 tables).
+- One row per run with the columns the user listed in `docs/FUTURE-FEATURES.md` §3: id, name, description (from F2), task, dataset_id, dataset_snapshot_json, base_model, hyperparams, accelerator + device, started_at, finished_at, status, error_message, best_pt_path, library_path, final_metrics_json.
+- Sidecar `events.jsonl` per run for chart replay (kept out of SQLite so the row stays small + queryable; gzipped on `completed` status to bound disk use across 50+ runs).
+- `/train/history` — sortable / filterable table.
+- `/train/history/<id>` — detail view that re-uses the existing live-training chart components, replaying from `events.jsonl`.
+- Actions: Re-run with same settings · Delete from history (with checkpoint-too prompt) · Edit name / description (post-hoc — un-blocks the F2 "editing locked" gate).
+
+**Open decisions for F3 sign-off** (before code): schema-migration strategy (hand-rolled vs Alembic); retention policy (forever vs auto-purge after N days); events.jsonl compression boundary; behaviour when a row's dataset folder has been deleted; whether to delete the library checkpoint when its history row is deleted.
+
+**Phase tag at completion:** `v0.12-f3-history`.
 
 ---
 

@@ -191,6 +191,10 @@ export interface TrainingMetrics {
 
 export interface TrainingJobInfo {
   job_id: string;
+  // F2: human-readable run metadata. `name` is always populated
+  // (backend fills in a default from <Task> · <stub> · time).
+  name: string;
+  description: string;
   status: TrainingStatus;
   dataset_id: string;
   model: string;
@@ -199,7 +203,7 @@ export interface TrainingJobInfo {
   epoch_current: number;
   started_at: string;
   finished_at: string | null;
-  accelerator_kind: "cuda" | "mps" | "cpu";
+  accelerator_kind: "cuda" | "mps" | "cpu" | "colab";
   output_dir: string;
   metrics: TrainingMetrics;
   error_message: string | null;
@@ -211,6 +215,12 @@ export interface StartTrainingBody {
   epochs: number;
   imgsz: number;
   batch: number;
+  // F2: optional run metadata. UI-driven calls pre-compute `name`
+  // client-side using the user's preferred TZ so the saved filename
+  // matches what they see in the placeholder. Server-side fallback
+  // (system TZ) only fires for direct API callers that send empty.
+  name?: string;
+  description?: string;
 }
 
 // Events shipped over /api/training/{id}/stream. Frontend reduces these
