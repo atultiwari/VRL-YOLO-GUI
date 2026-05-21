@@ -40,7 +40,7 @@
 | **P6c — Polish: reconnect-with-backoff + fetch retry + pilot plan** | ✅ done | `v0.9-p6-train-colab` | `46c4092` |
 | P6.fix-1 — Run on Colab callout visible on all hardware kinds | ✅ done | `v0.9.1` | `b2dbe46` |
 | **F1 — Models library: delete + reveal + path on every card** | ✅ done | `v0.10-f1-models-polish` | `788dee3` |
-| **F2 — Training-run name + description + app-wide TZ setting** | ✅ done | `v0.11-f2-run-naming` | _SHA pending_ |
+| **F2 — Training-run name + description + app-wide TZ setting** | ✅ done | `v0.11-f2-run-naming` | `fd429fc` |
 | F3 — Persistent training history | ⏳ next (depends F2) | — | — |
 | F4 — Dataset library: reuse + grouping | ⏳ pending (depends F3) | — | — |
 | P7 — Polish | ⏳ pending | — | — |

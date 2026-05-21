@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "F2",
     title: "Training-run name + description + app-wide timezone setting",
     tag: "v0.11-f2-run-naming",
-    commit: "PENDING",
+    commit: "fd429fc",
     date: "2026-05-21",
     status: "current",
     features: [
