@@ -1,5 +1,6 @@
 import type {
   DatasetInfo,
+  DatasetsListResponse,
   HardwareInfo,
   HealthResponse,
   InferenceResponse,
@@ -281,10 +282,17 @@ export interface DatasetUploadProgress {
  * doesn't expose upload-progress events — and a doctor dropping a 500-MB
  * dataset deserves a real percent bar.
  */
+export interface UploadDatasetOptions {
+  /** F4: optional name + description carried into the meta row. */
+  name?: string;
+  description?: string;
+}
+
 export function uploadDataset(
   files: File[],
   onProgress?: (p: DatasetUploadProgress) => void,
   signal?: AbortSignal,
+  options?: UploadDatasetOptions,
 ): Promise<DatasetInfo> {
   return new Promise((resolve, reject) => {
     const form = new FormData();
@@ -297,8 +305,18 @@ export function uploadDataset(
       form.append("files", f, path);
     }
 
+    // F4: name/description ride on the query string (FormData carries the
+    // files; query params don't conflict with the multipart body).
+    const params = new URLSearchParams();
+    if (options?.name) params.set("name", options.name);
+    if (options?.description) params.set("description", options.description);
+    const qs = params.toString();
+
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${API_BASE}/datasets/inspect`);
+    xhr.open(
+      "POST",
+      `${API_BASE}/datasets/inspect${qs ? `?${qs}` : ""}`,
+    );
     if (onProgress) {
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
@@ -558,4 +576,38 @@ export async function purgeTrainingHistory(
     `${API_BASE}/training/history/purge?older_than_days=${olderThanDays}`,
     { method: "POST" },
   );
+}
+
+// --- F4: dataset library + naming -------------------------------------------
+
+export async function listDatasets(): Promise<DatasetsListResponse> {
+  return fetchJson(`${API_BASE}/datasets`);
+}
+
+/**
+ * Delete a dataset folder. 409 if any queued/running training job
+ * has the dataset open — backend includes the run name(s) in the
+ * detail string.
+ */
+export async function deleteDataset(datasetId: string): Promise<void> {
+  await fetchJson(`${API_BASE}/datasets/${encodeURIComponent(datasetId)}`, {
+    method: "DELETE",
+  });
+}
+
+/**
+ * Edit a dataset's display name + description. F4 parallel to F2's
+ * training-run PATCH. Pass `null` for a field to leave it as-is;
+ * empty string for `name` resets to `"Dataset <id[:8]>"`; empty
+ * string for `description` clears it.
+ */
+export async function updateDatasetMetadata(
+  datasetId: string,
+  patch: { name?: string | null; description?: string | null },
+): Promise<void> {
+  await fetchJson(`${API_BASE}/datasets/${encodeURIComponent(datasetId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
 }

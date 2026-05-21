@@ -28,7 +28,13 @@ import {
 import { FolderDropzone } from "@/components/ui/folder-dropzone";
 import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
-import { ApiError, splitDataset, uploadDataset } from "@/lib/api";
+import { LibraryTable } from "@/components/datasets/library-table";
+import {
+  ApiError,
+  fetchDataset,
+  splitDataset,
+  uploadDataset,
+} from "@/lib/api";
 import { useTrainStore } from "@/lib/train-store";
 import type { DatasetFormat, DatasetInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -68,6 +74,16 @@ export default function DatasetWizardPage() {
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // F4: tab toggle — Drop a folder (existing) vs Pick from library.
+  // Default to "drop" when no dataset is in the store yet; the
+  // picker is a shortcut for users who already have datasets.
+  const [tab, setTab] = useState<"drop" | "library">("drop");
+
+  // F4: optional name + description on the upload card. Empty =
+  // backend's auto-default kicks in (`"Dataset <id[:8]>"`).
+  const [datasetName, setDatasetName] = useState("");
+  const [datasetDescription, setDatasetDescription] = useState("");
+
   // No task picked? Bounce back to /train so the user goes through the
   // proper entry point. The store auto-restores from localStorage, so
   // most reload cases will already have selectedTask set.
@@ -100,6 +116,10 @@ export default function DatasetWizardPage() {
           setUploadBytes({ loaded: p.loaded, total: p.total });
         },
         ctrl.signal,
+        {
+          name: datasetName.trim() || undefined,
+          description: datasetDescription.trim() || undefined,
+        },
       );
       setDataset(info);
       setFiles([]);
@@ -114,6 +134,26 @@ export default function DatasetWizardPage() {
   };
 
   const onCancelUpload = () => abortRef.current?.abort();
+
+  // F4: picking from library jumps straight to the inspect-and-confirm
+  // view. We refetch the dataset via /api/datasets/{id} so the
+  // DatasetInfo shape exactly matches what uploadDataset returns
+  // (the library list shape is a superset; this stays defensive).
+  const onPick = async (id: string) => {
+    setError(null);
+    try {
+      const info = await fetchDataset(id);
+      setDataset(info);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Could not load dataset",
+      );
+    }
+  };
 
   const onReset = () => {
     setFiles([]);
@@ -148,18 +188,128 @@ export default function DatasetWizardPage() {
       </header>
 
       {!dataset ? (
-        <UploadStage
-          files={files}
-          totalBytes={totalBytes}
-          uploadPct={uploadPct}
-          uploadBytes={uploadBytes}
-          uploading={uploading}
-          error={error}
-          onFolder={onFolder}
-          onUpload={onUpload}
-          onCancelUpload={onCancelUpload}
-          onClear={() => setFiles([])}
-        />
+        <>
+          <div className="inline-flex items-center gap-1 rounded-md border border-surface-muted bg-surface-subtle p-1 text-sm">
+            <button
+              type="button"
+              onClick={() => setTab("drop")}
+              className={cn(
+                "rounded px-3 py-1 font-medium transition",
+                tab === "drop"
+                  ? "bg-accent text-white"
+                  : "text-ink-muted hover:text-ink",
+              )}
+            >
+              Drop a folder
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("library")}
+              className={cn(
+                "rounded px-3 py-1 font-medium transition",
+                tab === "library"
+                  ? "bg-accent text-white"
+                  : "text-ink-muted hover:text-ink",
+              )}
+            >
+              Pick from library
+            </button>
+          </div>
+
+          {tab === "drop" ? (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    Name this dataset{" "}
+                    <span className="text-xs font-normal text-ink-muted">
+                      (optional)
+                    </span>
+                  </CardTitle>
+                  <CardDescription>
+                    Helps you find it later in the library + on training
+                    history. Leave blank for the auto-generated default
+                    (<code className="rounded bg-surface-muted px-1 py-0.5 text-xs">
+                      Dataset &lt;id-stub&gt;
+                    </code>).
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="ds-name"
+                      className="text-xs font-medium uppercase tracking-wide text-ink-muted"
+                    >
+                      Name
+                    </label>
+                    <input
+                      id="ds-name"
+                      type="text"
+                      value={datasetName}
+                      onChange={(e) => setDatasetName(e.target.value)}
+                      maxLength={200}
+                      placeholder="e.g. Lung partial classify"
+                      className="h-9 w-full rounded-md border border-surface-muted bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="ds-description"
+                      className="text-xs font-medium uppercase tracking-wide text-ink-muted"
+                    >
+                      Description
+                    </label>
+                    <textarea
+                      id="ds-description"
+                      value={datasetDescription}
+                      onChange={(e) => setDatasetDescription(e.target.value)}
+                      maxLength={2000}
+                      rows={2}
+                      placeholder="What's this dataset for? e.g. '4 lung tissue classes from the Kaggle partial set.'"
+                      className="w-full resize-y rounded-md border border-surface-muted bg-surface px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+              <UploadStage
+                files={files}
+                totalBytes={totalBytes}
+                uploadPct={uploadPct}
+                uploadBytes={uploadBytes}
+                uploading={uploading}
+                error={error}
+                onFolder={onFolder}
+                onUpload={onUpload}
+                onCancelUpload={onCancelUpload}
+                onClear={() => setFiles([])}
+              />
+            </>
+          ) : (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    Datasets you&apos;ve uploaded before
+                  </CardTitle>
+                  <CardDescription>
+                    Pick one to skip the upload step. The dataset stays
+                    where it is on disk; nothing gets copied.
+                  </CardDescription>
+                </CardHeader>
+              </Card>
+              <LibraryTable
+                mode="picker"
+                onPick={(row) => onPick(row.id)}
+              />
+              {error ? (
+                <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                  <AlertTriangle className="size-4" />
+                  {error}
+                </div>
+              ) : null}
+            </>
+          )}
+        </>
       ) : (
         <DatasetSummary
           dataset={dataset}

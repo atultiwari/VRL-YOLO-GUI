@@ -3,8 +3,9 @@
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones)
 > plus the post-v0.9 Future-Features chain in
 > [`docs/FUTURE-FEATURES.md`](FUTURE-FEATURES.md). Updated at the end of
-> each phase boundary. **Last edit: 2026-05-21 (F5 — Auto-save trained
-> models + macOS first-launch helper in .dmg).**
+> each phase boundary. **Last edit: 2026-05-21 (F4 — Dataset library:
+> naming + library tab + /datasets page + delete + history
+> cross-reference; F-chain complete).**
 >
 > **Known limitations and deferred work** live in
 > [`docs/CARRY-FORWARDS.md`](CARRY-FORWARDS.md) — full diagnoses + fix
@@ -43,13 +44,13 @@
 | **F2 — Training-run name + description + app-wide TZ setting** | ✅ done | `v0.11-f2-run-naming` | `fd429fc` |
 | **F3 — Persistent training history (SQLite + /train/history)** | ✅ done | `v0.12-f3-history` | `9ca25b5` |
 | **F5 — Auto-save trained models + macOS first-launch helper in .dmg** | ✅ done | `v0.13-f5-autosave` | `d64b8dd` |
-| F4 — Dataset library: reuse + grouping | ⏳ next | — | — |
-| P7 — Polish | ⏳ pending | — | — |
+| **F4 — Dataset library: naming + library tab + /datasets page + history cross-reference** | ✅ done | `v0.14-f4-dataset-library` | _SHA pending_ |
+| **P7 — Polish** | ⏳ next | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at the F5 commit (`v0.13-f5-autosave`). **F5 is the smallest of the F-chain — frontend-only auto-save with a behaviour-shift on the manual save path for symmetry.** New "Auto-save trained models" toggle in the Train section of /settings (default ON; sits next to F3's auto-purge toggle). Auto-save fires on both `/train/run` (live completion) and `/train/history/view` (completed run that finished while the user was elsewhere). Both auto and manual save now drop the implicit `setDefaultModel` call — saving to library and marking as default become two distinct actions. Also ships the **macOS install assets** (`install.command` + `README-MACOS-FIRST-RUN.txt`) inside the .dmg to close the unsigned-app first-launch Gatekeeper friction one of our test installs hit on v0.12.0. 89 backend tests + tsc green. **Next:** F4 — Dataset library: reuse + grouping by dataset (the last item in the F-chain). After F4, the F-chain is complete and we return to P7 (Polish) per PLAN.md §14.
+**Current head:** `main` at the F4 commit (`v0.14-f4-dataset-library`). **F-chain complete** — F1 (models polish) → F2 (run naming + TZ) → F3 (persistent history) → F5 (auto-save + macOS install assets) → F4 (dataset library) all shipped. SQLite schema is now at v2 (`training_runs` + `datasets` tables). New `/datasets` top-level page + per-dataset detail at `/datasets/view?id=<id>` + "Pick from library" tab on `/train/dataset` + naming on every dataset (with inline rename pencil on every library row + on the detail page) + cross-referenced stats showing `last_used_at` + `run_count` from F3 history. F2's training-history dataset filter swapped from raw UUID stubs to friendly names. `DELETE /api/datasets/{id}` refuses with 409 if any active job is using it; soft-mention modal explains that referenced history rows stay and library checkpoints stay in `/models`. 116 backend tests + tsc green; static export builds 14 pages including the two new dataset pages. **Next:** P7 — Polish (per PLAN.md §14). After P7: P8 (macOS packaging) → P9 (Windows packaging) → P10 (Pilot). The real-world pilot test (`docs/PILOT-TEST.md`) still hasn't been run — that's the v1.0 gate and a clinician + dataset task.
 
 ---
 
@@ -720,18 +721,54 @@ In dev mode `sys.executable` is `python3.11` and `-m vrl_yolo.engine.train_runne
 
 ---
 
-## Up next: F4 — Dataset library: reuse + grouping by dataset
+### ✅ F4 — Dataset library: naming + library tab + /datasets page + history cross-reference · `v0.14-f4-dataset-library` · _SHA pending_
 
-**Estimated medium (3–5 days)** per `docs/FUTURE-FEATURES.md` item 4. Last item in the F-chain — after F4, we return to P7 (Polish) per PLAN.md §14.
+**Trigger:** last item in the post-v0.9 Future-Features chain, planned in `docs/PLAN-F4.md` with 6 decisions signed off in one round: (1) **pull dataset naming + description into F4** via a new SQLite `datasets` table + schema v2 migration; (2) **standalone `/datasets` page in sidebar** + a library tab on `/train/dataset` (both render the same component); (3) soft-mention library checkpoints in the delete modal; (4) sort default = most-recently-used with a dropdown for the other modes; (5) partial datasets render in a separate "Couldn't read" section below the main table; (6) partial datasets remain deletable so users can reclaim orphan disk space. Inline rename pencil on every library row was added mid-implementation after the first spot-check showed 45 backfilled `"Dataset <stub>"` rows would otherwise require 45 detail-page round-trips to rename.
 
-- New `/api/datasets` (list) returning every dataset under `<storage>/datasets/` with task, image count, split layout, plus (using F3's history rows) `last_used_at` + `run_count`.
-- `/train/dataset` gains a two-tab card: **Drop a folder** (existing dropzone) vs **Pick from library**. Library tab is a list with the fields above + a "Use this dataset" CTA. Picking jumps straight to dataset-inspect with the existing dataset id, skipping the upload step.
-- `/train/history` page header gets a "Dataset" filter dropdown populated from distinct dataset_id values. The dataset library list links to "View all runs on this dataset" (= `/train/history?dataset=<id>`).
-- New `DELETE /api/datasets/{id}` route. Confirmation modal warns if there are saved training-history rows referencing it ("3 runs reference this dataset; their checkpoints remain in the library but the dataset itself will be gone — re-run with same settings will be unavailable for them"). Doesn't delete the runs themselves (F3's `dataset_missing` flag covers them).
+**Scope shipped:**
 
-**Open decisions for F4 sign-off** (before code): dataset naming (UUID-only vs optional name+description like F2's run naming); whether to show partially-uploaded datasets that failed inspect_dataset; how the "library" tab interacts with multi-user shared datasets (out-of-scope per PLAN.md §13.5 but worth confirming).
+| # | Subject | Outcome |
+|---|---|---|
+| F4.1 | Schema v2 migration | `engine/history_db.py` gets `_migrate_v1_to_v2(conn)` adding a `datasets` table (id PK, name, description, created_at) alongside F3's `training_runs`. Migration list extended; `SCHEMA_VERSION` bumped from 1 to 2. Fresh installs run v0→v1→v2 transparently; v1 installs auto-upgrade on next launch. |
+| F4.2 | First-launch backfill | `HistoryDb.migrate()` now runs `_backfill_datasets_locked(conn)` after the schema-only migrations land — walks `self._datasets_root` and `INSERT OR IGNORE`s a default-named row (`"Dataset <id[:8]>"`) for every folder that lacks a meta row. Idempotent: user-renamed rows keep their names; folders dropped onto disk after upgrade get a row on the next migrate. Runs every migrate() call, not just on the v1→v2 transition. |
+| F4.3 | `DatasetMeta` dataclass + `HistoryDb` meta methods | New frozen dataclass + `get_dataset_meta` / `list_dataset_meta` / `upsert_dataset_meta` / `delete_dataset_meta` methods. `upsert` is the unified path: INSERT on first call, UPDATE on subsequent. Empty `name` on update resets to `"Dataset <id[:8]>"` default (F2 semantics); None leaves field untouched. |
+| F4.4 | `HistoryDb.dataset_stats()` | One-pass `SELECT dataset_id, MAX(started_at), COUNT(*) ... GROUP BY dataset_id` aggregator returning `{dataset_id: {last_used_at, run_count}}`. Empty dict on a fresh install. Powers the F4 list view's cross-reference column. |
+| F4.5 | `JobManager.list_active_jobs_for_dataset(id)` | Returns running + queued jobs whose `dataset_root.name == id`. Used by `DELETE /api/datasets/{id}`'s 409 guard. |
+| F4.6 | Schemas (`api/schemas.py`) | New `DatasetListRow` (composes existing fields + meta name/description/created_at + cross-referenced last_used_at/run_count), `DatasetPartial` (id + error string for the "Couldn't read" surface), `DatasetsListResponse` (rows + partial), `UpdateDatasetMetadataRequest` (F2-style name + description). |
+| F4.7 | 3 new routes in `routers/dataset.py` | `GET /api/datasets` walks the on-disk folder, calls `inspect_dataset()` per entry, separates failures into `partial: []`, cross-references with `dataset_stats()`, sorts by most-recent-used (NULL last) with created_at tie-break. `DELETE /api/datasets/{id}` 404 if folder gone / 409 with run names if active job / 204 + `shutil.rmtree` + drops meta row otherwise; F3 history rows + library checkpoints are NOT touched. `PATCH /api/datasets/{id}` 204 / 404 / F2-style semantics. `POST /api/datasets/inspect` extended with optional `?name=&description=` query params; backend upserts the meta row right after inspect succeeds. |
+| F4.8 | Frontend types + helpers | `DatasetListRow` / `DatasetPartial` / `DatasetsListResponse` types in `lib/types.ts`. `listDatasets` / `deleteDataset` / `updateDatasetMetadata` helpers in `lib/api.ts`. `uploadDataset` extended with optional `{name, description}` ride-along that gets added to the URL query string. |
+| F4.9 | Shared `components/datasets/library-table.tsx` | One component, two modes (`picker` for the wizard shortcut, `browse` for the standalone page). Sort dropdown above the table. Healthy rows in the main table; partial folders in a separate "Couldn't read" section below. Delete confirmation modal with the soft-mention checkpoints copy when `run_count > 0`. **Inline rename pencil on every row** — hover-to-reveal pencil swaps the name for an input + Save/Cancel + Enter/Escape shortcuts; saves via PATCH and invalidates the query so the table refreshes immediately. Per-row state so editing one row doesn't re-render the whole table. |
+| F4.10 | `/datasets` page + sidebar entry | New top-level page renders `<LibraryTable mode="browse">`. Header has "Upload new dataset" button linking to `/train/dataset`. Sidebar gets a "Datasets" entry under Train with the `Database` lucide icon. |
+| F4.11 | `/datasets/view?id=<id>` detail page | Query-param URL (Next static-export can't pre-render dynamic `[id]` routes without generateStaticParams) + `<Suspense>` wrapper for the `useSearchParams` requirement. Inline-editable name + description (same pencil pattern as F2/F3). Summary cards (Task / Format / Images / Splits). Splits table. Classes pills with per-class image counts. Recent runs list (top 10) linking to each run's `/train/history/view`. Action row: Re-split via wizard / Use for new training / Delete. |
+| F4.12 | `/train/dataset` tab toggle + naming card | Tab toggle above the existing dropzone — "Drop a folder" (default) vs "Pick from library". Drop-mode shows a new "Name this dataset (optional)" card with Name + Description inputs that pass through to `uploadDataset`. Pick-mode renders `<LibraryTable mode="picker">`; clicking "Use this" fetches the dataset via `fetchDataset` and advances the wizard. |
+| F4.13 | `/train/history` filter upgrade | Dataset dropdown now fetches `/api/datasets` and shows friendly names instead of UUID stubs. Orphan dataset_ids (referenced by history rows whose folder was deleted) still show with a "(deleted)" suffix. `?dataset=<id>` URL param prefills the filter (used by the library's "X runs" link). Page wrapped in Suspense for the static-export `useSearchParams` requirement. |
+| F4.14 | Backend tests | 27 new tests across `tests/test_datasets_naming.py` (11) + `tests/test_datasets_library.py` (12) + 4 in `tests/test_history.py` (the dataset_stats aggregator + the v1→v2 schema check on the existing fresh-migration test). All synthetic fixtures — no real ultralytics, no subprocess spawn. **116 total backend tests across the project, all green.** Frontend tsc clean. |
+| F4.15 | Verification | Backend boot + curl: `GET /api/datasets` returned 45 rows from the user's existing install (backfilled), with proper `name` / `run_count` cross-references; PATCH/DELETE 404 on unknown ids with clinician-readable details; schema v1→v2 migration ran transparently on the existing install without disrupting prior data. User manually verified the UI end-to-end in the desktop binary including the inline-rename pencil that landed after the first spot-check. |
 
-**Phase tag at completion:** `v0.14-f4-dataset-library`. After F4 ships, the F-chain is complete and **P7 — Polish** is next per PLAN.md §14.
+**Carried-forward:**
+- No bulk-rename or bulk-delete on the library table. Each action is one-row-at-a-time. The hover-to-reveal pencil makes per-row rename fast; users with 45 backfilled `"Dataset <stub>"` rows still click 45 pencils to rename them all. Bulk-edit is a future polish item if pilot users hit it.
+- Re-splitting a dataset still goes through the existing `/train/dataset` Prepare-splits modal — the detail page's "Re-split via wizard" action just links there. F4 doesn't introduce a new re-split surface.
+- No global search across datasets (by name or by class). Sort dropdown covers common cases; revisit if pilot libraries grow past ~30 datasets.
+- The two `_record_to_info()` helpers in `routers/models.py` and `routers/training.py` are still duplicated, carrying forward from F2 + F3.
+
+---
+
+## Up next: P7 — Polish
+
+**The F-chain is complete.** F1 (models polish) → F2 (run naming + TZ) → F3 (persistent history) → F5 (auto-save + macOS install assets) → F4 (dataset library) all shipped. The project now returns to the original PLAN.md §14 phase sequence.
+
+**Estimated 1 week** per PLAN.md §14. Scope (from PLAN.md):
+
+- UX pass — clinician-readable error states across all surfaces (Predict + Train + Models + Datasets + History).
+- In-app help — empty states + onboarding hints + tooltips wherever a non-obvious affordance lives.
+- Docs site — two Roboflow walkthroughs (detect + classify) per `docs/user/`; plus the updated quick-start now that the F-chain has added /datasets and /train/history surfaces.
+- Polish items that fall out of the pilot test (`docs/PILOT-TEST.md`), if one has happened by then.
+
+**Open decisions for P7 sign-off** (before code): which surfaces get error-state copy passes first; whether the in-app help is hover-tooltips vs a dedicated help panel; whether the Roboflow walkthroughs ship as Markdown in `docs/user/` or as a `/docs` route inside the app.
+
+**Phase tag at completion:** `v0.15-p7-polish` (back to phase-tag naming; the F-chain's `v0.1{0,1,2,3,4}-f{N}-*` series is done).
+
+After P7: **P8 (macOS packaging)** → **P9 (Windows packaging)** → **P10 (Pilot)**. The pilot test (`docs/PILOT-TEST.md`) remains the v1.0 gate and still hasn't been run with a real clinician + dataset.
 
 ---
 

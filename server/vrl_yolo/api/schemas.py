@@ -205,6 +205,66 @@ class DatasetInfoOut(BaseModel):
     unassigned_image_count: int = 0
 
 
+# --- F4: dataset library ----------------------------------------------------
+
+
+class DatasetListRow(BaseModel):
+    """One row in the dataset library (F4 §2.3).
+
+    Composes `DatasetInfoOut` + F4 metadata (name, description,
+    created_at) + F3 cross-referenced stats (last_used_at, run_count).
+    """
+
+    # Shape mirrors DatasetInfoOut.
+    id: str
+    format: DatasetFormatLit
+    task: Task
+    root_path: str
+    splits: list[DatasetSplitOut]
+    classes: list[str]
+    class_counts: dict[str, int] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    unassigned_image_count: int = 0
+    # F4 dataset meta (always populated — backfilled on first migrate).
+    name: str
+    description: str
+    created_at: str  # ISO 8601 UTC
+    # F4 cross-referenced from training_runs.
+    last_used_at: str | None = None
+    run_count: int = 0
+
+
+class DatasetPartial(BaseModel):
+    """A dataset folder that exists but couldn't be inspected.
+
+    Surfaced as a separate list in `DatasetsListResponse` so the UI
+    can render a "Couldn't read" section below the main library
+    table (per PLAN-F4 §3.2 decision 5).
+    """
+
+    id: str
+    error: str
+
+
+class DatasetsListResponse(BaseModel):
+    rows: list[DatasetListRow]
+    partial: list[DatasetPartial] = Field(default_factory=list)
+
+
+class UpdateDatasetMetadataRequest(BaseModel):
+    """Body for `PATCH /api/datasets/{id}` — F4 dataset naming.
+
+    Same semantics as F2's `UpdateTrainingMetadataRequest`:
+    - ``None`` (either field) means "don't touch this field."
+    - Empty string for ``description`` clears it.
+    - Empty string for ``name`` resets to the auto-generated default
+      (`"Dataset <id[:8]>"`).
+    """
+
+    name: str | None = Field(None, max_length=200)
+    description: str | None = Field(None, max_length=2000)
+
+
 class HardwareInfo(BaseModel):
     kind: Literal["cuda", "mps", "cpu"]
     name: str

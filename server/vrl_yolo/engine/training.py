@@ -307,6 +307,22 @@ class JobManager:
         with self._jobs_lock:
             return self._jobs.get(job_id)
 
+    def list_active_jobs_for_dataset(self, dataset_id: str) -> list[TrainingJob]:
+        """F4: jobs whose dataset_root.name matches AND status is alive.
+
+        Used by `DELETE /api/datasets/{id}` to refuse with 409 when a
+        running or queued job is still using the dataset. Completed /
+        failed / cancelled jobs don't block delete — their reference
+        is historical (F3 dataset_missing flag handles them).
+        """
+        with self._jobs_lock:
+            return [
+                j
+                for j in self._jobs.values()
+                if j.dataset_root.name == dataset_id
+                and j.status in {"queued", "running"}
+            ]
+
     def start(
         self,
         *,

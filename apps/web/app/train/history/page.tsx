@@ -15,8 +15,8 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,7 @@ import { Spinner } from "@/components/ui/spinner";
 import {
   ApiError,
   deleteTrainingHistoryRow,
+  listDatasets,
   listTrainingHistory,
   purgeTrainingHistory,
 } from "@/lib/api";
@@ -59,6 +60,23 @@ const STATUS_BADGE: Record<
 };
 
 export default function TrainHistoryPage() {
+  // useSearchParams (for the F4 `?dataset=<id>` prefill) requires a
+  // Suspense boundary in Next.js static-export mode. Same pattern as
+  // /train/configure and /train/history/view.
+  return (
+    <Suspense
+      fallback={
+        <section className="flex h-full items-center justify-center p-12">
+          <Spinner /> Loading training history…
+        </section>
+      }
+    >
+      <_HistoryInner />
+    </Suspense>
+  );
+}
+
+function _HistoryInner() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { settings } = useSettings();
@@ -67,7 +85,11 @@ export default function TrainHistoryPage() {
 
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [datasetFilter, setDatasetFilter] = useState<string>("all");
+  // F4: `?dataset=<id>` on the URL prefills the filter (used by the
+  // dataset library's "X runs" link). Falls back to "all" when absent.
+  const searchParams = useSearchParams();
+  const initialDataset = searchParams.get("dataset") ?? "all";
+  const [datasetFilter, setDatasetFilter] = useState<string>(initialDataset);
   const [sortBy, setSortBy] = useState<SortKey>("started_at");
   const [autoPurgeToast, setAutoPurgeToast] = useState<string | null>(null);
   const [rowError, setRowError] = useState<string | null>(null);
@@ -184,11 +206,36 @@ export default function TrainHistoryPage() {
     },
   });
 
+  // F4: pull dataset names + ids from the library so the filter
+  // dropdown shows friendly names instead of raw UUID stubs. We
+  // ALSO union with the dataset_ids on the current history page in
+  // case a row references a dataset whose folder has been deleted
+  // (the orphan still needs to be filterable so the user can find
+  // its runs).
+  const datasetLibrary = useQuery({
+    queryKey: ["datasets-list"],
+    queryFn: listDatasets,
+    refetchOnWindowFocus: false,
+  });
   const datasets = useMemo(() => {
-    const seen = new Set<string>();
-    for (const row of list.data?.rows ?? []) seen.add(row.dataset_id);
-    return Array.from(seen).sort();
-  }, [list.data]);
+    const known: { id: string; label: string }[] = [];
+    const seenIds = new Set<string>();
+    for (const row of datasetLibrary.data?.rows ?? []) {
+      known.push({ id: row.id, label: row.name });
+      seenIds.add(row.id);
+    }
+    for (const row of list.data?.rows ?? []) {
+      if (!seenIds.has(row.dataset_id)) {
+        known.push({
+          id: row.dataset_id,
+          label: `${row.dataset_id.slice(0, 12)} (deleted)`,
+        });
+        seenIds.add(row.dataset_id);
+      }
+    }
+    known.sort((a, b) => a.label.localeCompare(b.label));
+    return known;
+  }, [datasetLibrary.data, list.data]);
 
   return (
     <section className="flex h-full flex-col gap-8 px-12 py-12">
@@ -346,7 +393,7 @@ function FilterBar({
   onStatus: (v: StatusFilter) => void;
   dataset: string;
   onDataset: (v: string) => void;
-  datasets: string[];
+  datasets: { id: string; label: string }[];
   sortBy: SortKey;
   onSort: (v: SortKey) => void;
 }) {
@@ -373,8 +420,8 @@ function FilterBar({
         <Select value={dataset} onChange={onDataset}>
           <option value="all">All</option>
           {datasets.map((d) => (
-            <option key={d} value={d}>
-              {d.slice(0, 12)}
+            <option key={d.id} value={d.id}>
+              {d.label}
             </option>
           ))}
         </Select>

@@ -160,6 +160,37 @@ export interface DatasetInfo {
   unassigned_image_count?: number;
 }
 
+// F4: dataset library + metadata.
+
+export interface DatasetListRow {
+  id: string;
+  format: DatasetFormat;
+  task: Task;
+  root_path: string;
+  splits: DatasetSplit[];
+  classes: string[];
+  class_counts: Record<string, number>;
+  warnings: string[];
+  unassigned_image_count: number;
+  // F4 metadata.
+  name: string;
+  description: string;
+  created_at: string;
+  // F4 cross-references from training_runs.
+  last_used_at: string | null;
+  run_count: number;
+}
+
+export interface DatasetPartial {
+  id: string;
+  error: string;
+}
+
+export interface DatasetsListResponse {
+  rows: DatasetListRow[];
+  partial: DatasetPartial[];
+}
+
 export interface HardwareInfo {
   kind: "cuda" | "mps" | "cpu";
   name: string;

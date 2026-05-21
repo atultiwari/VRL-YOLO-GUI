@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   Activity,
   Brain,
+  Database,
   History,
   Layers,
   Microscope,
@@ -43,6 +44,12 @@ const WORKSPACE: NavItem[] = [
     label: "Training history",
     description: "Past runs, replay, re-run",
     icon: History,
+  },
+  {
+    href: "/datasets",
+    label: "Datasets",
+    description: "Uploaded library + reuse",
+    icon: Database,
   },
   {
     href: "/models",

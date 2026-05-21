@@ -1,6 +1,6 @@
 [project]
 name = "vrl-yolo-gui"
-version = "0.13.0"
+version = "0.14.0"
 description = "VRL YOLO GUI — clinician-facing desktop toolkit for YOLO detection and classification in histopathology and hematology."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -12,6 +12,41 @@ for the running tracker.
 
 ---
 
+## [0.14.0] — 2026-05-21 · F4: Dataset library — naming + library tab + /datasets page + delete + history cross-reference
+
+**Tag:** `v0.14-f4-dataset-library` (**last item in the F-chain** — F1–F5 are now all shipped; after this, the project returns to the original PLAN.md §14 phase sequence with P7 Polish next.)
+
+### Added
+- **SQLite schema v2 with new `datasets` table.** New `_migrate_v1_to_v2` adds the table (id, name, description, created_at) alongside F3's `training_runs`. Fresh installs migrate v0→v1→v2 transparently; existing v1 installs auto-migrate to v2 on next launch. **First-launch backfill** — every dataset folder already under `<storage>/datasets/` gets a default-named row (`"Dataset <id[:8]>"`) inserted via `INSERT OR IGNORE` so users with pre-F4 installs immediately see all their old datasets in the new library with the auto-generated name. The backfill is idempotent: a user who has already renamed a dataset keeps their custom name; a folder dropped onto disk after upgrade gets a row on the next migrate.
+- **`HistoryDb.dataset_stats()` + meta methods.** One-pass aggregator (`SELECT dataset_id, MAX(started_at), COUNT(*) ... GROUP BY dataset_id`) for the cross-referenced last-used + run-count stats. New `get_dataset_meta` / `list_dataset_meta` / `upsert_dataset_meta` / `delete_dataset_meta` parallel to the existing F2/F3 patterns. Empty-string for `name` on update resets to `"Dataset <id[:8]>"` default (same semantics as F2's PATCH).
+- **`JobManager.list_active_jobs_for_dataset(id)` helper.** Returns running + queued jobs whose `dataset_root.name` matches. Used by `DELETE /api/datasets/{id}`'s 409 guard.
+- **Three new dataset routes** in `routers/dataset.py`:
+  - `GET /api/datasets` — paginated list cross-referenced with HistoryDb. Returns `{rows: [...], partial: [...]}` so the UI can render a separate "Couldn't read" section for folders that exist on disk but fail `inspect_dataset()`. Default sort: most-recently-used DESC (NULL last), tie-break by created_at DESC.
+  - `DELETE /api/datasets/{id}` — wipes the folder + meta row. Returns **409 Conflict** with the run name(s) if any queued/running training job is using the dataset. F3 history rows stay (orphan-flagged via the `dataset_missing` boolean). Library checkpoints under `models/<task>/` are NOT touched — separate user-owned artifact.
+  - `PATCH /api/datasets/{id}` — edit name + description with F2-style semantics (`None`=untouched, empty `name`=reset to default, empty `description`=clear). 204 No Content on success; 404 if folder gone.
+- **`POST /api/datasets/inspect` extended** with optional `?name=&description=` query params. Backend upserts the meta row right after `inspect_dataset()` succeeds so the user's chosen name appears in the library on first list.
+- **`/datasets` top-level page** (new sidebar entry "Datasets" under Train). Browse-mode rendering of the shared library-table component. Header has an "Upload new dataset" button that lands on `/train/dataset`.
+- **`/datasets/view?id=<id>` detail page** (query-param URL, wrapped in Suspense for static-export compat — same pattern as F3's history detail). Inline-editable name + description, summary cards (Task / Format / Images / Splits), splits table, classes pills, recent runs list (top 10) linking to each run's detail, action row (Re-split / Use for training / Delete).
+- **"Pick from library" tab on `/train/dataset`.** Tab toggle above the existing dropzone — "Drop a folder" stays the default. Picker mode of the library table shows "Use this" CTA; click → fetches the dataset + jumps to inspect-and-confirm with it pre-selected, skipping the upload step entirely.
+- **"Name this dataset (optional)" card on `/train/dataset`** in the Drop-a-folder tab. Two inputs (Name + Description, max 200/2000 chars) above the dropzone; the values ride on the multipart upload's query string.
+- **Shared `components/datasets/library-table.tsx`** component used in both pages. Picker mode (Use this CTA) vs browse mode (Open link). Sort dropdown (Most recently used / Most runs / Newest first). **Inline rename on every row** — hover-to-reveal pencil icon next to the name swaps it for an input with Save/Cancel + Enter/Escape shortcuts (same UX as F2's run-name editor on `/train/run`). Saves immediately via PATCH; lets users rename all 45 backfilled rows from one screen instead of opening each detail page.
+- **Soft-mention delete confirmation modal.** When `run_count > 0`, the modal shows an amber warning row: *"N training runs reference this dataset. History records stay; saved checkpoints stay in /models. Delete them separately from there if needed."* Decision 5 from PLAN-F4 §8.
+- **Separate "Couldn't read" section** below the main library table for any folder where `inspect_dataset()` raises. Partial rows are still deletable so users can reclaim orphan disk space. Decision 5 from PLAN-F4 §8.
+- **`/train/history` dataset filter upgraded** to use friendly names from `/api/datasets` instead of raw UUID stubs. Orphan dataset_ids (referenced by history rows whose folder has been deleted) still show in the dropdown with a "(deleted)" suffix so the user can filter by them. Also wires the `?dataset=<id>` query param so the library's "X runs" link prefills the filter; the page is now wrapped in Suspense for the static-export `useSearchParams` requirement.
+- **27 new backend tests** covering the schema v2 migration (fresh + idempotent + backfill + non-clobber on rerun), the new `HistoryDb` meta methods (upsert insert/update/reset-on-empty/None-untouched, delete returns False for unknown, get returns None for unknown), the PATCH route (200 + 204 + 404 paths), the `GET /api/datasets` list (empty / with-rows / with-history-cross-reference / with-partial / sort order), the DELETE route (204 / 404 unknown / 409 with active run / preserves-history-rows), and `dataset_stats()` (groups correctly / empty on fresh install). **116 total backend tests across the project, all green.**
+
+### Changed
+- `JobManager.start()` and `start_colab_job()` continue to write history rows on a dataset's first reference; the new F4 list view cross-references the same `dataset_id` column without any change to those write paths.
+- The two `_record_to_info()` helpers in `routers/models.py` and `routers/training.py` are still duplicated, carrying forward from F2 with a warning comment in both. Tolerable for now; revisit when `ModelInfo` gains another field.
+
+### Known limitations (deferred)
+- **No bulk-rename or bulk-delete on the library table.** Each row's actions are one-at-a-time. The hover-to-reveal pencil makes per-row rename fast, but a clinician with 45 datasets named `Dataset <stub>` will still click 45 pencils to rename them all. Bulk-edit is a future polish item if pilot users hit it.
+- **Re-splitting a dataset** still goes through the existing `/train/dataset` Prepare-splits modal — the detail page's "Re-split via wizard" action just links there. F4 doesn't introduce a new re-split surface.
+- **No global search across datasets** (by name or by class). The sort dropdown covers the common cases for now; revisit if pilot libraries grow past ~30 datasets and the user wants a search box.
+- **The `_record_to_info()` duplication** between `routers/models.py` and `routers/training.py` is still tolerated (carried forward from F2 and F3).
+
+---
+
 ## [0.13.0] — 2026-05-21 · F5: Auto-save trained models + macOS first-launch helper in .dmg
 
 **Tag:** `v0.13-f5-autosave` (fourth of the post-v0.9 Future-Features chain; F4 still pending. Also bundles a non-feature DMG packaging fix for the long-standing unsigned-app Gatekeeper friction.)

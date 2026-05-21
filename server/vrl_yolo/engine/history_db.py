@@ -26,7 +26,7 @@ from typing import Literal
 
 _LOG = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 # ---- schema migrations -------------------------------------------------------
@@ -75,9 +75,39 @@ def _migrate_v0_to_v1(conn: sqlite3.Connection) -> None:
     conn.execute("INSERT INTO schema_version (version) VALUES (1)")
 
 
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    """F4: dataset naming table.
+
+    Adds a `datasets` table parallel to `training_runs` carrying
+    optional Name + Description per dataset folder. Backfills rows
+    for every dataset folder that already exists under
+    `<storage>/datasets/` so the F4 library UI never sees a NULL
+    row for a folder it knows is on disk.
+
+    Backfill needs the datasets root path — the migration reads it
+    from the connection's caller (passed in via the
+    `application_id` PRAGMA trick is fragile, so instead the
+    `HistoryDb.migrate()` caller does the backfill in a second
+    pass after this migration runs the schema-only DDL).
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS datasets (
+            id           TEXT PRIMARY KEY,
+            name         TEXT NOT NULL,
+            description  TEXT NOT NULL DEFAULT '',
+            created_at   TEXT NOT NULL
+        );
+        """
+    )
+    conn.execute("DELETE FROM schema_version")
+    conn.execute("INSERT INTO schema_version (version) VALUES (2)")
+
+
 # Append future migrations here as `(from_version, to_version, fn)`.
 _MIGRATIONS: list[tuple[int, int, "callable"]] = [
     (0, 1, _migrate_v0_to_v1),
+    (1, 2, _migrate_v1_to_v2),
 ]
 
 
@@ -116,6 +146,21 @@ class HistoryRow:
     dataset_snapshot: dict | None
 
 
+@dataclass(frozen=True)
+class DatasetMeta:
+    """F4: per-dataset metadata stored alongside the on-disk folder."""
+
+    id: str
+    name: str
+    description: str
+    created_at: str  # ISO 8601 UTC
+
+
+def _default_dataset_name(dataset_id: str) -> str:
+    """Format used wherever no explicit name has been set."""
+    return f"Dataset {dataset_id[:8]}"
+
+
 # ---- HistoryDb --------------------------------------------------------------
 
 
@@ -149,7 +194,14 @@ class HistoryDb:
     # ---- migrations ---------------------------------------------------------
 
     def migrate(self) -> None:
-        """Run any pending migrations to bring the schema up to date."""
+        """Run any pending migrations to bring the schema up to date.
+
+        After the schema-only migrations run, also backfills the F4
+        `datasets` table with default-named rows for any dataset
+        folder under `self._datasets_root` that doesn't have a meta
+        row yet. Lets pre-F4 installs see their existing folders in
+        the F4 library on first launch.
+        """
         with self._lock, self._connect() as conn:
             # `schema_version` may not exist yet on a fresh install — the
             # v0→v1 migration creates it.
@@ -168,6 +220,34 @@ class HistoryDb:
                     fn(conn)
                     current = to_v
             _LOG.info("history_db: schema at v%d", current)
+
+            # F4 backfill — runs every migrate() call, not just on
+            # the v1→v2 transition, so a dataset folder dropped onto
+            # disk after upgrade also gets a meta row on the next
+            # launch. INSERT OR IGNORE makes this idempotent.
+            if current >= 2 and self._datasets_root is not None:
+                self._backfill_datasets_locked(conn)
+
+    def _backfill_datasets_locked(self, conn: sqlite3.Connection) -> None:
+        """Insert default-named meta rows for any folder lacking one.
+
+        Caller must hold `self._lock` and own `conn`. INSERT OR IGNORE
+        means a row that already exists keeps its (possibly user-edited)
+        name and description — the backfill only fills gaps.
+        """
+        if not self._datasets_root or not self._datasets_root.is_dir():
+            return
+        for entry in self._datasets_root.iterdir():
+            if not entry.is_dir():
+                continue
+            mtime_iso = datetime.fromtimestamp(
+                entry.stat().st_mtime, tz=timezone.utc
+            ).isoformat()
+            conn.execute(
+                "INSERT OR IGNORE INTO datasets (id, name, description, created_at) "
+                "VALUES (?, ?, '', ?)",
+                (entry.name, _default_dataset_name(entry.name), mtime_iso),
+            )
 
     # ---- writers ------------------------------------------------------------
 
@@ -392,6 +472,121 @@ class HistoryDb:
                 ).fetchall()
             ]
 
+    # ---- F4: dataset meta + stats ------------------------------------------
+
+    def dataset_stats(self) -> dict[str, dict[str, int | str | None]]:
+        """Per-dataset aggregates from training_runs (F4 §2.4).
+
+        Returns ``{dataset_id: {last_used_at, run_count}}``. Empty
+        dict on a fresh install. One SQL pass.
+        """
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT dataset_id, MAX(started_at) AS last, COUNT(*) AS n "
+                "FROM training_runs GROUP BY dataset_id"
+            ).fetchall()
+        return {
+            row["dataset_id"]: {
+                "last_used_at": row["last"],
+                "run_count": int(row["n"]),
+            }
+            for row in rows
+        }
+
+    def get_dataset_meta(self, dataset_id: str) -> "DatasetMeta | None":
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM datasets WHERE id = ?", (dataset_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            return _row_to_dataset_meta(row)
+
+    def list_dataset_meta(self) -> dict[str, "DatasetMeta"]:
+        """All meta rows keyed by dataset id. Empty dict on fresh install."""
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM datasets ORDER BY id"
+            ).fetchall()
+        return {row["id"]: _row_to_dataset_meta(row) for row in rows}
+
+    def upsert_dataset_meta(
+        self,
+        dataset_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        created_at: datetime | None = None,
+    ) -> "DatasetMeta":
+        """Insert or update a dataset meta row.
+
+        ``name=None`` on insert → uses the ``_default_dataset_name``;
+        on update → leaves the existing name untouched. Same for
+        ``description=None`` and ``created_at=None``.
+
+        Empty string for ``name`` (not None) on update resets to the
+        default — matches F2's PATCH semantics.
+        """
+        with self._lock, self._connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM datasets WHERE id = ?", (dataset_id,)
+            ).fetchone()
+            if existing is None:
+                # INSERT path
+                final_name = (
+                    (name.strip()[:200] if name and name.strip() else None)
+                    or _default_dataset_name(dataset_id)
+                )
+                final_desc = (description or "").strip()[:2000]
+                when = (created_at or datetime.now(timezone.utc)).isoformat()
+                conn.execute(
+                    "INSERT INTO datasets (id, name, description, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (dataset_id, final_name, final_desc, when),
+                )
+                return DatasetMeta(
+                    id=dataset_id,
+                    name=final_name,
+                    description=final_desc,
+                    created_at=when,
+                )
+
+            # UPDATE path
+            updates: list[str] = []
+            params: list = []
+            if name is not None:
+                stripped = name.strip()
+                if not stripped:
+                    # Empty string resets to default.
+                    updates.append("name = ?")
+                    params.append(_default_dataset_name(dataset_id))
+                else:
+                    updates.append("name = ?")
+                    params.append(stripped[:200])
+            if description is not None:
+                updates.append("description = ?")
+                params.append(description.strip()[:2000])
+            if created_at is not None:
+                updates.append("created_at = ?")
+                params.append(created_at.isoformat())
+            if updates:
+                params.append(dataset_id)
+                conn.execute(
+                    f"UPDATE datasets SET {', '.join(updates)} WHERE id = ?",
+                    params,
+                )
+            row = conn.execute(
+                "SELECT * FROM datasets WHERE id = ?", (dataset_id,)
+            ).fetchone()
+            return _row_to_dataset_meta(row)
+
+    def delete_dataset_meta(self, dataset_id: str) -> bool:
+        with self._lock, self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM datasets WHERE id = ?", (dataset_id,)
+            )
+            return cursor.rowcount > 0
+
     # ---- helpers ------------------------------------------------------------
 
     def _row_to_history(self, row: sqlite3.Row) -> HistoryRow:
@@ -457,3 +652,12 @@ def _decode_snapshot(raw: str | None) -> dict | None:
     except (json.JSONDecodeError, TypeError):
         pass
     return None
+
+
+def _row_to_dataset_meta(row: sqlite3.Row) -> DatasetMeta:
+    return DatasetMeta(
+        id=row["id"],
+        name=row["name"],
+        description=row["description"] or "",
+        created_at=row["created_at"],
+    )

@@ -116,9 +116,12 @@ def test_migrate_seeds_schema_on_fresh_db(tmp_path: Path) -> None:
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )
         }
-    assert version == 1
+    # F3 shipped v1; F4 bumped to v2 (datasets table). Fresh installs
+    # always run to the latest version.
+    assert version == 2
     assert "training_runs" in tables
     assert "schema_version" in tables
+    assert "datasets" in tables  # F4 table
 
 
 def test_migrate_is_idempotent(history_db: HistoryDb) -> None:
@@ -307,6 +310,41 @@ def test_purge_older_than_deletes_old_rows(history_db: HistoryDb) -> None:
     assert deleted == ["old"]
     assert history_db.get("old") is None
     assert history_db.get("recent") is not None
+
+
+# ---- dataset_stats (F4 helper, lives on HistoryDb) -------------------------
+
+
+def test_dataset_stats_groups_by_dataset_id(history_db: HistoryDb) -> None:
+    """F4 §2.4: one SQL pass returns last_used_at + run_count per dataset."""
+    _insert_default(
+        history_db,
+        job_id="a1",
+        dataset_id="ds-alpha",
+        started=datetime(2026, 5, 1, tzinfo=timezone.utc),
+    )
+    _insert_default(
+        history_db,
+        job_id="a2",
+        dataset_id="ds-alpha",
+        started=datetime(2026, 5, 10, tzinfo=timezone.utc),
+    )
+    _insert_default(
+        history_db,
+        job_id="b1",
+        dataset_id="ds-beta",
+        started=datetime(2026, 4, 1, tzinfo=timezone.utc),
+    )
+
+    stats = history_db.dataset_stats()
+    assert stats["ds-alpha"]["run_count"] == 2
+    assert stats["ds-alpha"]["last_used_at"].startswith("2026-05-10")
+    assert stats["ds-beta"]["run_count"] == 1
+    assert stats["ds-beta"]["last_used_at"].startswith("2026-04-01")
+
+
+def test_dataset_stats_empty_on_fresh_install(history_db: HistoryDb) -> None:
+    assert history_db.dataset_stats() == {}
 
 
 # ---- EventLog ---------------------------------------------------------------

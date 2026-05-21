@@ -93,7 +93,14 @@ dist/
 # inside the source tree and broke CI for two days. Always lead with `/` or
 # `<dirname>/` rooted at a known source path.
 data/
-datasets/
+# `datasets/` (no leading `/`) would match `apps/web/app/datasets/` +
+# `apps/web/components/datasets/` after F4 introduced both — exactly
+# the unanchored-match foot-gun the warning above this section called
+# out. Anchor to `/datasets/` (repo-root only) so runtime dataset
+# storage that PyInstaller writes to `<storage_root>/datasets/` is
+# still ignored when the user `cp -r` it into the repo for debugging,
+# without breaking the new frontend dirs.
+/datasets/
 *.sqlite
 *.sqlite3
 *.db
