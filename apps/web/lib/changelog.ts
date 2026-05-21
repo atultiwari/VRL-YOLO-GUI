@@ -41,13 +41,27 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.14.1",
+    phase: "F4.fix-1",
+    title: "macOS .dmg build fix — dangling-symlink sweep + symlinks=True on copytree",
+    tag: "v0.14.1",
+    commit: "TBD",
+    date: "2026-05-21",
+    status: "current",
+    features: [],
+    fixes: [
+      "**macOS-arm64 GitHub Actions release builds now succeed.** Both `v0.13-f5-autosave` and `v0.14-f4-dataset-library` failed in CI at the new DMG-staging step that F5 introduced (`scripts/build-release.py::maybe_macos_dmg`). The post-build cleanup step removes PySide6 devtool `.app` bundles (Assistant, Designer, Linguist, qtdiag, pyside6-*) but PyInstaller's PySide6 hook drops sibling symlinks pointing at those bundles; deleting the real directories left dangling symlinks behind. The new `shutil.copytree(app_path, stage_dir / app_path.name)` then tried to follow them and exploded with `FileNotFoundError: '.../PySide6/Assistant.app'`. Two surgical fixes: (1) `strip_nested_macos_bundles` now skips symlinks in its first pass (was implicitly following them via `Path.is_dir()`) and adds a second pass that unlinks any broken symlinks left behind by the strip; (2) the `shutil.copytree` call in `maybe_macos_dmg` now passes `symlinks=True` so Qt framework `Versions/Current → A` symlinks are preserved as symlinks rather than followed (also tolerates any broken symlinks that slip through). Verified against a synthetic bundle that reproduces the exact PySide6 layout: 14/14 checks pass — strip removes exactly the 3 devtool bundles, sibling symlinks are cleaned up, `QtWebEngineProcess.app` (the Pyloid webview helper) is preserved, and `copytree(symlinks=True)` round-trips the bundle including the `Versions/Current` symlink intact.",
+    ],
+    knownLimitations: [],
+  },
+  {
     version: "0.14.0",
     phase: "F4",
     title: "Dataset library — naming + library tab + /datasets page + history cross-reference",
     tag: "v0.14-f4-dataset-library",
     commit: "08e0828",
     date: "2026-05-21",
-    status: "current",
+    status: "shipped",
     features: [
       "**SQLite schema v2 with new `datasets` table.** v0→v1→v2 transparently on fresh installs; v1 installs auto-migrate on next launch. First-launch backfill: every existing dataset folder under `<storage>/datasets/` gets a default-named row (`Dataset <id[:8]>`) so users see all their old datasets in the new library immediately. Idempotent — user-renamed rows keep their custom names; folders dropped onto disk after upgrade get a row on the next migrate.",
       "**`/datasets` top-level page** (new sidebar entry 'Datasets' under Train) — browse-mode rendering of the shared library-table component. Sort dropdown: Most recently used / Most runs / Newest first.",

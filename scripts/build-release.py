@@ -425,12 +425,22 @@ def strip_nested_macos_bundles(app_path: Path) -> int:
     `Frameworks/PySide6/Qt/lib/QtWebEngineCore.framework/Helpers/
     QtWebEngineProcess.app`. Qt WebEngine spawns it at runtime to host the
     Chromium renderer that Pyloid uses for the webview.
+
+    PyInstaller's PySide6 hook drops some devtool `.app` bundles as
+    symlinks pointing at a real copy elsewhere in the tree. `rmtree`
+    deletes the real target first; the symlinks then become dangling
+    and break later passes (e.g. `shutil.copytree` in `maybe_macos_dmg`,
+    notarization scans, codesign verify). We sweep dangling symlinks
+    pointing into the now-removed devtool bundles in a second pass.
     """
     removed = 0
     for entry in list(app_path.rglob("*")):
         if entry == app_path:
             continue
-        if not entry.is_dir():
+        # `Path.is_dir()` follows symlinks. We want real directories
+        # only — symlinks-to-dir are handled by the dangling-symlink
+        # sweep below.
+        if entry.is_symlink() or not entry.is_dir():
             continue
         stem = _bundle_stem(entry)
         if stem is None:
@@ -444,6 +454,21 @@ def strip_nested_macos_bundles(app_path: Path) -> int:
             removed += 1
         except OSError as exc:
             warn(f"  could not remove {entry.relative_to(app_path)}: {exc}")
+
+    # Second pass: drop any broken symlinks left behind (typically
+    # sibling devtool `.app` symlinks pointing at the directories we
+    # just removed). `Path.exists()` follows symlinks, so a broken
+    # symlink returns False here while `is_symlink()` returns True.
+    for entry in list(app_path.rglob("*")):
+        if entry.is_symlink() and not entry.exists():
+            try:
+                entry.unlink()
+            except OSError as exc:
+                warn(
+                    f"  could not unlink dangling symlink "
+                    f"{entry.relative_to(app_path)}: {exc}"
+                )
+
     return removed
 
 
@@ -518,7 +543,13 @@ def maybe_macos_dmg(app_path: Path, arch_suffix: str = "") -> Path | None:
     if stage_dir.exists():
         shutil.rmtree(stage_dir)
     stage_dir.mkdir(parents=True)
-    shutil.copytree(app_path, stage_dir / app_path.name)
+    # `symlinks=True` preserves the symlinks Qt frameworks use for the
+    # standard `Versions/A/Current` layout, AND avoids choking on any
+    # broken symlinks the devtool strip may have left behind. Without
+    # this the GitHub Actions macos-arm64 build failed in v0.13 + v0.14
+    # on dangling `Frameworks/PySide6/{Assistant,Designer,Linguist}.app`
+    # symlinks.
+    shutil.copytree(app_path, stage_dir / app_path.name, symlinks=True)
 
     install_assets = ROOT / "assets" / "install" / "macos"
     helper_files: list[str] = []

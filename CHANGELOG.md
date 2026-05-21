@@ -12,6 +12,22 @@ for the running tracker.
 
 ---
 
+## [0.14.1] — 2026-05-21 · F4.fix-1: macOS .dmg build fix — dangling-symlink sweep + `symlinks=True` on copytree
+
+**Tag:** `v0.14.1`
+
+### Fixed
+- **macOS-arm64 GitHub Actions release builds now succeed.** Both `v0.13-f5-autosave` and `v0.14-f4-dataset-library` failed in CI at the new DMG-staging step that F5 introduced in `scripts/build-release.py::maybe_macos_dmg`. The post-build cleanup step removes PySide6 devtool `.app` bundles (Assistant, Designer, Linguist, qtdiag, pyside6-*) but PyInstaller's PySide6 hook drops sibling symlinks pointing at those bundles; deleting the real directories left dangling symlinks behind. The new `shutil.copytree(app_path, stage_dir / app_path.name)` then tried to follow them and exploded with `FileNotFoundError: '.../PySide6/Assistant.app'`. Two surgical fixes in `scripts/build-release.py`:
+  - **`strip_nested_macos_bundles`** now skips symlinks in its first pass (was implicitly following them via `Path.is_dir()` which follows symlinks) and adds a second pass that unlinks any broken symlinks left behind by the strip. The second pass uses `is_symlink() and not exists()` to detect the dangling state — `exists()` follows symlinks while `is_symlink()` does not.
+  - **`maybe_macos_dmg`** — the `shutil.copytree(...)` call now passes `symlinks=True` so Qt framework `Versions/Current → A` symlinks are preserved as symlinks rather than followed (which also bloated the staged copy and made the .dmg larger than necessary). Also tolerates any broken symlinks that slip through.
+- **Verification.** Targeted synthetic-bundle test reproduces the exact failing PySide6 layout (real `Assistant.app`/`Designer.app`/`Linguist.app` directories with sibling symlinks pointing into them, a `QtWebEngineProcess.app` placed in `QtWebEngineCore.framework/Helpers/`, and a `QtCore.framework/Versions/Current → A` symlink). 14/14 checks pass: strip removes exactly the 3 devtool bundles, sibling symlinks are cleaned up automatically, `QtWebEngineProcess.app` (the Pyloid webview helper Qt spawns at runtime — must not be touched) is preserved, `Versions/Current` resolves to a valid target, and `copytree(symlinks=True)` round-trips the bundle including the `Versions/Current` symlink intact.
+
+### Notes
+- No application-code changes — the fix is build-pipeline-only. Backend test count stays at 116. Windows builds were never affected (only macOS exercises this code path).
+- Anyone who needs an unsigned `.dmg` from v0.13 (F5) can rebuild from the `v0.13-f5-autosave` tag now that the script is fixed; we are not retroactively retagging F5.
+
+---
+
 ## [0.14.0] — 2026-05-21 · F4: Dataset library — naming + library tab + /datasets page + delete + history cross-reference
 
 **Tag:** `v0.14-f4-dataset-library` (**last item in the F-chain** — F1–F5 are now all shipped; after this, the project returns to the original PLAN.md §14 phase sequence with P7 Polish next.)
