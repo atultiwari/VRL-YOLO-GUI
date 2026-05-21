@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "F3",
     title: "Persistent training history — SQLite + /train/history + edit-lock removed",
     tag: "v0.12-f3-history",
-    commit: "PENDING",
+    commit: "9ca25b5",
     date: "2026-05-21",
     status: "current",
     features: [
