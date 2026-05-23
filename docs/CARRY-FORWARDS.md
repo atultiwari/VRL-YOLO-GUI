@@ -4,7 +4,7 @@
 > shipped versions. Each item is a real gap, not a bug we don't know about.
 > Sorted by likelihood of hitting in real use, not by complexity.
 >
-> **Last edit: 2026-05-19 (item #3 closed in v0.8.6 / P5.fix-6 — splitter now supports preserve-existing-splits. All deferred items resolved.).**
+> **Last edit: 2026-05-23 (F-chain live items added: #4 `_record_to_info` duplication, #5 no bulk operations, #6 auto-save needs an open page, #7 install.command hard-codes `/Applications`, #8 no global search, #9 pilot test outstanding, #10 Linux/Windows job-cancel-on-quit. Items #1–#3 from the P5 era remain resolved; their history stays below.).**
 
 Each entry is self-contained so a future session can pick it up cold without
 re-reading the whole P5 fix chain.
@@ -350,14 +350,523 @@ backward-compatible change.
 
 ---
 
+---
+
+## 4. `_record_to_info()` duplicated across routers
+
+| | |
+|---|---|
+| **Status** | ⏳ Open |
+| **First flagged** | v0.11 / F2 (caught by user manual verification — save-to-library 500'd) |
+| **Severity** | Low — silent drift bug, not user-facing today |
+| **Blocks pilot?** | No |
+
+### What's happening today
+
+An 8-line helper `_record_to_info(record) -> ModelInfo` lives in both
+`server/vrl_yolo/routers/models.py` AND `server/vrl_yolo/routers/training.py`
+(the latter calls it after `save_to_library` to return the freshly-saved
+checkpoint). Both files carry a warning comment about the other.
+
+F1 added a `path` field to `ModelInfo` and only updated the `models.py`
+copy. F2's first manual test of `Save to library` then 500'd because
+the `training.py` copy was still returning a `ModelInfo` without
+`path`. Caught by Atul's manual UI spot-check, fixed in-line during
+the F2 push.
+
+### Concrete impact
+
+Zero today — both copies are in sync as of v0.14.1. The bug only
+appears the **next** time `ModelInfo` gains a field (F-chain or P-phase
+introduction) and the contributor only updates one copy.
+
+### Why deferred
+
+Pure refactor with no user-visible change. The helper is small (~8
+lines), drift cadence is low (one field added in nine months), and the
+v0.11 incident was caught in <5 min of manual testing. Trading 15 min
+of de-duplication work today against the risk of repeating the same
+diagnose-and-fix cycle next time. Cost-benefit favours deferral until
+`ModelInfo` next changes shape.
+
+### Reference code
+
+- `server/vrl_yolo/routers/models.py::_record_to_info`
+- `server/vrl_yolo/routers/training.py::_record_to_info`
+
+### Options for fixing
+
+**Option A: Extract to a shared helper module.** New file
+`server/vrl_yolo/routers/_model_info.py` exporting one function; both
+routers import it. ~15 min, mechanical change.
+
+**Option B: Move into `ModelRegistry` itself** as
+`ModelRegistry.record_to_info(record) -> ModelInfo`. Slightly nicer
+home for it conceptually (the registry already owns the record schema),
+slightly bigger blast radius since `ModelRegistry` is touched by more
+tests.
+
+### Recommended path
+
+**Option A** the next time `ModelInfo` changes. Don't refactor
+preemptively; let the next field-add force the de-duplication.
+
+---
+
+## 5. No bulk operations on F3 history / F4 datasets / F1 models
+
+| | |
+|---|---|
+| **Status** | ⏳ Open |
+| **First flagged** | v0.14 / F4 (45 backfilled rows = 45 single-row deletes for a pilot machine with many existing datasets) |
+| **Severity** | Medium — annoyance grows linearly with library size |
+| **Blocks pilot?** | No, but flag in pilot feedback |
+
+### What's happening today
+
+Three tables in the app — `/models`, `/train/history`, `/datasets` —
+all expose per-row actions only. Delete is a one-at-a-time confirmation
+modal. Rename is the F-chain inline pencil. There's no
+multi-select-and-bulk-action affordance anywhere.
+
+F4's first-launch migration backfills a `Dataset <id[:8]>` row for
+every folder under `<storage>/datasets/` on existing v0.11+
+installs. On a developer machine with 45 existing dataset folders
+(my own, during F4 testing), that's 45 separate rename clicks to get
+human-readable names; same problem will hit pilot users whose v0.12 or
+v0.13 install accumulated a backlog.
+
+### Concrete impact
+
+- **Datasets:** N pencil clicks to rename N backfilled folders. The
+  inline pencil reduces each click to ~5 s but cumulative friction is
+  real past ~20 rows.
+- **History:** can't bulk-delete a sweep of failed / experimental runs;
+  the manual auto-purge button (`Clean up runs older than 30 days`)
+  only handles the time-based case.
+- **Models:** can't bulk-delete a batch of throwaway training checkpoints
+  from a hyperparam sweep.
+
+### Why deferred
+
+F-chain shipped under a "single user, single action at a time"
+philosophy that matches the clinical workflow. Bulk operations
+introduce a multi-select selection model + a bulk-action toolbar +
+confirmation copy that handles the N-item case ("delete these 12
+items? Their references are…"). Not worth building for v1 because we
+don't yet know how often pilot users hit the limit.
+
+### Reference code
+
+- `apps/web/components/datasets/library-table.tsx` — single-row actions.
+- `apps/web/app/train/history/page.tsx` — sortable/filterable table.
+- `apps/web/app/models/page.tsx` — card grid (would need a different
+  selection treatment than tables).
+
+### Options for fixing
+
+**Option A: Checkbox column + bulk-action bar.** Adds a left-most
+checkbox column on both tables, a sticky "X selected · Delete · Cancel"
+bar at the top when anything is selected. Reuses the existing per-row
+delete confirmation modal with an "N items" header.
+
+**Option B: Power-user keyboard select** (Shift-click for range,
+Cmd/Ctrl-click for multi). Faster for keyboard users; less discoverable
+for clinicians. Could pair with Option A.
+
+**Option C: Bulk-rename via CSV export/import.** Heaviest; only worth
+it if pilot users say renaming 45 rows is unworkable.
+
+### Recommended path
+
+**Defer until pilot feedback**. If pilot users specifically ask for
+bulk ops, ship Option A on tables first (datasets + history), models
+grid second (different selection treatment). Don't ship Option C
+unless someone names a real use case.
+
+---
+
+## 6. Auto-save fires only when a tracking page is open
+
+| | |
+|---|---|
+| **Status** | ⏳ Open |
+| **First flagged** | v0.13 / F5 (auto-save toggle ships frontend-only) |
+| **Severity** | Low — covered by the fallback in `/train/history/view` |
+| **Blocks pilot?** | No |
+
+### What's happening today
+
+F5's auto-save toggle is **frontend-only by design** (per the F5
+"Why frontend-only" rationale): the React tree on `/train/run`
+watches WS events for `status === "completed"` and fires the
+existing `save.mutate()` call automatically when the user has the
+auto-save setting ON.
+
+To cover the "user closed `/train/run` mid-training" case, the same
+auto-save check also runs on `/train/history/view` mount. So a
+clinician who closed both pages and reopens the app gets the
+auto-save when they next visit the history detail page for that
+run.
+
+### Concrete impact
+
+If the user never opens either page after a completed run, the
+trained model never lands in `/models`. Practically:
+
+- **Pilot-likely scenario:** clinician kicks off an overnight run,
+  Cmd+Q's the app to put the laptop to sleep, opens the app the next
+  morning, goes straight to `/predict`. The trained checkpoint exists
+  on disk under `<storage>/training/<id>/best.pt`, but it's not in
+  `/models` until they navigate to `/train/history/view?id=<id>`.
+- **Mitigated by** the F3 history page showing the completed run
+  prominently. Most users will click into it out of curiosity, which
+  fires the auto-save.
+
+### Why deferred
+
+A backend-driven headless auto-save would need to (a) post the user's
+setting to the server, (b) decide what to do when no client is
+connected, (c) handle the dataset-deletion / disk-full / etc. error
+cases without a user-visible surface. F5's "Why frontend-only"
+section makes the case explicitly — frontend-only matches the
+clinical workflow where the user *is* watching the run.
+
+### Reference code
+
+- `apps/web/app/train/run/page.tsx::useAutoSave` — the watcher.
+- `apps/web/app/train/history/view/page.tsx` — fallback firing site.
+- `server/vrl_yolo/engine/training.py::JobManager._on_status_change` —
+  natural hook point for a backend-driven implementation.
+
+### Options for fixing
+
+**Option A: Background headless auto-save in JobManager.** Reads the
+setting from a new persisted-server-side toggle; calls
+`save_to_library` on the same status transition. Setting needs to live
+on the server (new endpoint) since the WS client is no longer the
+trigger.
+
+**Option B: Bump the F3 history page on app launch.** On first
+fetch, if any run completed since last visit AND has no
+`library_path` AND auto-save is ON, show a banner offering to
+"Auto-save 3 completed runs from your last session." One-click
+catches up.
+
+**Option C: Status quo + better discoverability.** Add an
+"unsaved runs" badge on the sidebar Train entry when completed
+runs lack `library_path`. Cheapest; relies on the user to act.
+
+### Recommended path
+
+**Option C** as a v1.1 polish, escalate to **Option A** if pilot
+users explicitly say "where's my model?". Don't build A pre-pilot —
+the surface area is large and the failure modes (backend write fails
+with no UI to surface) are awkward.
+
+---
+
+## 7. `install.command` hard-codes `/Applications`
+
+| | |
+|---|---|
+| **Status** | ⏳ Open |
+| **First flagged** | v0.13 / F5 (macOS first-launch helper ships in .dmg) |
+| **Severity** | Low — power users only; documented workaround |
+| **Blocks pilot?** | No |
+
+### What's happening today
+
+`assets/install/macos/install.command` strips the
+`com.apple.quarantine` xattr from a fixed path:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/VRL-YOLO-GUI.app
+```
+
+The DMG's drag-to-Applications affordance + the README explicitly
+instruct the user to install to `/Applications`. Power users who put
+the .app somewhere else (`~/Applications`, `/Volumes/Data/Apps/`,
+etc.) see install.command silently no-op against the missing path
+and then hit Gatekeeper the first time they launch.
+
+### Concrete impact
+
+- Tiny user pool (power users who deliberately install outside
+  `/Applications`).
+- Workaround is documented in `README-MACOS-FIRST-RUN.txt` (run the
+  xattr command manually with the actual path).
+- No data loss; user just sees the "VRL-YOLO-GUI is damaged and can't
+  be opened" Gatekeeper error and has to dig out the README.
+
+### Why deferred
+
+The standard install flow (drag to `/Applications`) is the documented
+happy path. Detecting alternate install paths needs either an
+`mdfind`-based search (slow, multi-second on indexed-but-stale
+volumes) or a Finder file-prompt (requires a GUI app, not a bare
+shell script). Both add complexity to cover what's currently a <1%
+edge case.
+
+### Reference code
+
+- `assets/install/macos/install.command`
+- `assets/install/macos/README-MACOS-FIRST-RUN.txt`
+- `scripts/build-release.py::maybe_macos_dmg`
+
+### Options for fixing
+
+**Option A: `mdfind` discovery with fallback.** First try the literal
+`/Applications/VRL-YOLO-GUI.app`; if missing, `mdfind
+"kMDItemFSName == 'VRL-YOLO-GUI.app'"` and use the first hit.
+Add a 3-second timeout + fall through to README otherwise.
+
+**Option B: AppleScript Finder picker.** `osascript` to show a
+"choose file" dialog scoped to .app bundles. More clicks for the
+user; works on every install layout.
+
+**Option C: Detect from running .app.** Once the app has launched
+once (and crashed via Gatekeeper), we know its path. Show a
+first-launch banner inside the app saying "Run this xattr command,
+then quit and relaunch" with a copy button — moves the friction
+from the .dmg helper into the app itself, where the path is known.
+
+### Recommended path
+
+**Option A** if pilot users hit this; **Option C** as the lower-cost
+alternative since it integrates with the existing first-launch
+helper experience. Don't build either pre-pilot — too narrow to
+prioritise over P7's broader polish pass.
+
+---
+
+## 8. No global search across datasets / runs
+
+| | |
+|---|---|
+| **Status** | ⏳ Open |
+| **First flagged** | v0.12 / F3 (history filter chips) → v0.14 / F4 (dataset filter chips) |
+| **Severity** | Medium — scales poorly past ~30 items |
+| **Blocks pilot?** | No, but probable pilot feedback |
+
+### What's happening today
+
+`/train/history` and `/datasets` both rely on:
+
+- Filter chips (task, status, dataset for history; task for datasets)
+- Sort dropdowns (started_at, name, dataset)
+- A `?dataset=<id>` URL param that wires the two pages together
+
+There's no free-text search box on either page. To find a run named
+"lung classify imgsz=320 try 3", the user filters by task → classify,
+sorts by started_at, and scans the list visually.
+
+### Concrete impact
+
+Works fine at ~10 items per table (the count most v1 pilot users
+will have for a 1–2-week pilot). Above ~30 items, visual scanning
+gets slow; above ~100 items it's untenable.
+
+### Why deferred
+
+F3 + F4 explicitly chose filter chips over search to keep the v1
+surface small and the UX predictable (one paradigm — facets — across
+both pages). A real search box needs to make decisions about:
+
+- Search scope (name only? + description? + dataset_snapshot_json?)
+- Tokenisation (substring? prefix? fuzzy?)
+- Cross-page (search both history AND datasets from a global ⌘K?)
+
+Premature without seeing how pilot data actually shapes itself.
+
+### Reference code
+
+- `apps/web/app/train/history/page.tsx`
+- `apps/web/app/datasets/page.tsx`
+- `server/vrl_yolo/routers/datasets.py` + `history.py` — list endpoints
+
+### Options for fixing
+
+**Option A: Per-page search input.** Each table gets a search box
+above the filter chips. Backend: new `?q=<term>` param on list
+endpoints, SQL `LIKE '%term%'` on `name + description`. Simplest,
+preserves the existing per-page paradigm.
+
+**Option B: Global ⌘K palette.** A `cmdk`-style modal triggered from
+anywhere, searches across datasets + runs + models simultaneously.
+More work; better discoverability for power users.
+
+**Option C: SQLite FTS5 index.** Backend gains a virtual FTS5 table
+that mirrors the searchable columns of `datasets` + `training_runs`.
+Sub-millisecond search even at 10k rows. Overkill for v1 but
+trivially additive if the search surface ever needs ranking.
+
+### Recommended path
+
+**Option A** as a v1.1 polish item if pilot users name it. Hold
+Option B/C until we have a real data shape to design against.
+
+---
+
+## 9. Pilot test outstanding — v1.0 gate
+
+| | |
+|---|---|
+| **Status** | ⏳ Open |
+| **First flagged** | v0.9 / P6c (when `docs/PILOT-TEST.md` was created) |
+| **Severity** | **High — this gates v1.0 release.** |
+| **Blocks pilot?** | This *is* the pilot. |
+
+### What's happening today
+
+`docs/PILOT-TEST.md` is a 9-step executable checklist that translates
+PLAN-P6.md §7 into a real clinician + dataset run:
+
+1. Fresh install on macOS (unsigned .dmg + first-launch helper)
+2. Drop a real histopathology dataset
+3. Inspector accepts the layout (or splitter handles it)
+4. Train a detect model locally
+5. Train a classify model on Colab
+6. Auto-save lands the checkpoint in `/models`
+7. Switch to Predict, run on a fresh folder
+8. Generate the PDF + CSV report
+9. Re-open the app the next day; history + dataset library show
+   yesterday's work
+
+Until that runs end-to-end against a real clinician + a real
+dataset, the project is "code complete" but not "shipped to users."
+
+### Concrete impact
+
+**Everything we don't know about the product, we still don't know.**
+F1-F5 closed the obvious workflow gaps (history, library, auto-save,
+naming) but the integration story across all of them — does it feel
+coherent to a clinician who's never used the app before? — is
+unproven.
+
+### Why deferred
+
+Pilot needs three things lined up:
+1. A clinician with ~half a day of time + a real dataset.
+2. A signed-off v1.0 release candidate (current contender:
+   v0.15-p7-polish after P7 lands).
+3. A debrief framework — what we ask, what we record, how we
+   prioritise the feedback.
+
+None of those are blockers I can produce; the user owns the clinician
+schedule.
+
+### Reference code / docs
+
+- `docs/PILOT-TEST.md` — the 9-step checklist
+- `docs/PLAN-P6.md` §7 — the original pilot framing
+- `docs/dev/` — debrief notes will live here when pilot runs
+
+### Options for fixing
+
+There's only one path: run the test. The "options" are around
+scope + sequencing:
+
+**Option A: Run pilot against v0.14.1 today.** Skip P7 polish;
+the F-chain shipped enough product to test. Risk: known polish gaps
+(error message clarity, in-app help) muddy the feedback.
+
+**Option B: Run pilot against v0.15 / P7 release.** Ship Polish
+first, then pilot. Slows the feedback loop by ~1 week.
+
+**Option C: Run a partial pilot now.** Just the Predict path (P1-P3b
++ F1) which is the most mature. Get feedback on what's already
+shipped before committing to P7 polish scope.
+
+### Recommended path
+
+**Option B** is the default per PLAN.md §14 ordering (P7 → P8 → P9
+→ P10). **Option C** is a real alternative if pilot timing
+pressure is tight — Predict is the half of the app that already
+works end-to-end and we'd learn meaningful things even without
+Train.
+
+---
+
+## 10. Linux / Windows still orphan training subprocesses on app quit
+
+| | |
+|---|---|
+| **Status** | ⏳ Open |
+| **First flagged** | v0.8.5 / P5.fix-5 (resolved item #1, but explicitly Mac-only) |
+| **Severity** | Low for v1 (pilot is macOS-only); medium when Linux/Windows builds ship |
+| **Blocks pilot?** | No |
+
+### What's happening today
+
+`_cancel_active_jobs_best_effort` (the helper that closes item #1
+on macOS) is wired into the macOS-specific shutdown path:
+`_install_macos_shutdown_workaround`'s `QEvent::Close` filter +
+`aboutToQuit` fallback. The Windows + Linux quit paths don't have
+that wiring yet.
+
+On those platforms, the training subprocess (started with its own
+process group via `start_new_session=True` on POSIX or
+`CREATE_NEW_PROCESS_GROUP` on Windows) survives the app quit. The
+subprocess runs to completion, writes `best.pt` to disk, then
+exits silently.
+
+### Concrete impact for pilot
+
+Zero — pilot is macOS-only. The .dmg ships, Linux/Windows binaries
+exist as CI artifacts but aren't part of the pilot scope.
+
+### Concrete impact for post-pilot
+
+Windows users (P9 packaging) and Linux power users will hit the
+same "I quit but training kept running" surprise that item #1
+solved on macOS. Same diagnostic, same fix shape, just a different
+wire-up.
+
+### Reference code
+
+- `src-pyloid/main.py::_cancel_active_jobs_best_effort` — the
+  cross-platform helper exists; only the macOS hook calls it.
+- `src-pyloid/main.py::_install_macos_shutdown_workaround` — the
+  macOS hook itself.
+- `server/vrl_yolo/engine/training.py::JobManager.cancel` —
+  already cross-platform (SIGTERM on POSIX, CTRL_BREAK_EVENT on
+  Windows).
+
+### Options for fixing
+
+**Option A: Mirror the macOS hook on other platforms.** Add a
+platform-neutral `_install_shutdown_workaround(window, fastapi_app)`
+that wires `_cancel_active_jobs_best_effort` into the
+`aboutToQuit` signal universally, plus the macOS-specific
+`QEvent::Close` filter only on Darwin. The helper itself is
+already cross-platform.
+
+**Option B: Defer to P9 / Linux release planning.** Don't pre-build
+for non-pilot platforms; fold the work into the platform-packaging
+phase that ships that platform.
+
+### Recommended path
+
+**Option B** until either P9 or a Linux release lands as an
+explicit goal. The fix is small but easy to forget at the wrong
+moment; pinning it to the platform-introduction phase keeps the
+context fresh.
+
+---
+
 ## When to revisit
 
-- **After tomorrow's thorough testing** of v0.8.4: if anything in the
-  testing exposes orphan-on-quit symptoms, item #1 jumps to "blocking."
-- **Before P6 (Train on Colab) starts**: the skill update (#2) is worth
-  doing first since P6 will also lean on Pyloid + QtWebEngine packaging.
-- **During pilot prep**: revisit splitter behaviour (#3) once we know
-  what shape pilots' datasets actually arrive in.
+- **Before pilot starts**: review #6 (auto-save reach) and #9
+  (pilot framework). #9 *is* the next action; the rest are
+  background context.
+- **During P9 (Windows packaging)**: item #10 jumps from "deferred"
+  to "must fix" — the platform that exposes the bug is the one we're
+  shipping.
+- **Next time `ModelInfo` gains a field**: trigger for item #4.
+- **First pilot feedback session**: filter items #5 (bulk ops) and
+  #8 (search) through real usage data — both are speculative until
+  pilot data exists.
 
 ## Resolved
 
