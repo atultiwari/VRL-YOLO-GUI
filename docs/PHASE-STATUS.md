@@ -48,7 +48,7 @@
 | **F5 — Auto-save trained models + macOS first-launch helper in .dmg** | ✅ done | `v0.13-f5-autosave` | `d64b8dd` |
 | **F4 — Dataset library: naming + library tab + /datasets page + history cross-reference** | ✅ done | `v0.14-f4-dataset-library` | `08e0828` |
 | F4.fix-1 — macOS .dmg build fix (dangling-symlink sweep + `symlinks=True` on copytree) | ✅ done | `v0.14.1` | `1a5fb1f` |
-| P6.fix-2 — Colab progress visibility (`waiting for Colab` + warm-up `preparing` states; queued→running on `start`) | ✅ done | `v0.14.2` | _(pending)_ |
+| P6.fix-2 — Colab progress visibility (`waiting for Colab` + warm-up `preparing` states; queued→running on `start`) | ✅ done | `v0.14.2` | `242aa0d` |
 | **P7 — Polish** | ⏳ next | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |

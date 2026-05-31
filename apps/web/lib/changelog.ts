@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "P6.fix-2",
     title: "Colab progress visibility — 'waiting for Colab' + warm-up states",
     tag: "v0.14.2",
-    commit: "0000000",
+    commit: "242aa0d",
     date: "2026-05-31",
     status: "current",
     features: [],
