@@ -68,8 +68,14 @@ import { cn } from "@/lib/utils";
 
 const LOG_MAX_LINES = 200;
 
+// "waiting" is a desktop-only display state — never a persisted backend
+// JobStatus. It surfaces a Colab session that's connected but whose
+// training cell hasn't been run yet (remote status still "queued"), so the
+// badge reads "waiting for Colab" instead of a misleading "running"/"queued".
+type DisplayStatus = TrainingStatus | "waiting";
+
 const STATUS_TONE: Record<
-  TrainingStatus,
+  DisplayStatus,
   { tone: "subtle" | "accent" | "clinical" | "danger"; label: string }
 > = {
   queued: { tone: "subtle", label: "queued" },
@@ -77,6 +83,7 @@ const STATUS_TONE: Record<
   completed: { tone: "clinical", label: "completed" },
   failed: { tone: "danger", label: "failed" },
   cancelled: { tone: "subtle", label: "cancelled" },
+  waiting: { tone: "subtle", label: "waiting for Colab" },
 };
 
 interface ChartRow {
@@ -401,6 +408,21 @@ export default function TrainRunPage() {
     },
   });
 
+  // Colab warm-up has NO events between `start` and the first epoch (model
+  // download + dataset cache), so nothing else re-renders the page. Tick a
+  // clock once a second while preparing so the "Elapsed …" proof-of-life in
+  // the lifecycle banner actually moves.
+  const isPreparing =
+    snapshot?.accelerator_kind === "colab" &&
+    status === "running" &&
+    (snapshot?.epoch_current ?? 0) === 0;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isPreparing) return;
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [isPreparing]);
+
   const onTrainAnother = () => {
     setActiveJob(null);
     router.push("/train");
@@ -420,13 +442,38 @@ export default function TrainRunPage() {
   const isTerminal =
     status === "completed" || status === "failed" || status === "cancelled";
 
+  // Colab lifecycle phases that exist *before* any metrics flow. Both clear
+  // the instant the first `epoch` event lands (epochCurrent ≥ 1).
+  //   - "waiting":   connected, but the notebook's "Run training" cell
+  //                  hasn't been run yet (job still seeded "queued").
+  //   - "preparing": training started (we saw a `start` → status "running")
+  //                  but Ultralytics is still downloading the model and
+  //                  caching the dataset, so epoch 1 hasn't finished.
+  const colabPhase: "waiting" | "preparing" | null =
+    snapshot?.accelerator_kind === "colab" && !isTerminal && epochCurrent === 0
+      ? status === "running"
+        ? "preparing"
+        : "waiting"
+      : null;
+  const displayStatus: DisplayStatus =
+    colabPhase === "waiting" ? "waiting" : status;
+  const prepElapsedSeconds =
+    colabPhase === "preparing" && snapshot
+      ? Math.max(
+          0,
+          Math.floor(
+            (nowMs - new Date(snapshot.started_at).getTime()) / 1000,
+          ),
+        )
+      : 0;
+
   // Source of truth for which charts to draw. Falls back to detect for
   // the brief moment between mount and the first `/api/training/{id}`
   // response — by the time the first epoch event arrives `snapshot.task`
   // is set, so the chart re-renders correctly.
   const task: Task = snapshot?.task ?? "detect";
 
-  const statusBadge = STATUS_TONE[status];
+  const statusBadge = STATUS_TONE[displayStatus];
 
   // F3: completed-run edits now route through HistoryDb, so the F2
   // lock is gone. We keep the variable for now as `false` rather than
@@ -683,6 +730,13 @@ export default function TrainRunPage() {
         </div>
       ) : null}
 
+      {colabPhase ? (
+        <ColabLifecycleBanner
+          phase={colabPhase}
+          elapsedSeconds={prepElapsedSeconds}
+        />
+      ) : null}
+
       {colabConnection ? (
         <ColabConnectionBanner state={colabConnection} />
       ) : null}
@@ -776,6 +830,61 @@ export default function TrainRunPage() {
 // --------------------------------------------------------------------------
 // Sub-components
 // --------------------------------------------------------------------------
+
+// Lifecycle banner for the pre-metrics window of a Colab run. Distinct from
+// ColabConnectionBanner (which is about tunnel reconnect/backoff): this one
+// explains *why* there are no charts yet and tells the clinician what to do.
+function ColabLifecycleBanner({
+  phase,
+  elapsedSeconds,
+}: {
+  phase: "waiting" | "preparing";
+  elapsedSeconds: number;
+}) {
+  const waiting = phase === "waiting";
+  return (
+    <div
+      className={cn(
+        "flex items-start gap-3 rounded-md border px-4 py-3 text-sm",
+        waiting
+          ? "border-amber-300 bg-amber-50 text-amber-900"
+          : "border-accent/30 bg-accent/5 text-ink",
+      )}
+      role="status"
+    >
+      {waiting ? (
+        <Cloud className="mt-0.5 size-4 shrink-0 text-amber-600" />
+      ) : (
+        <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-accent" />
+      )}
+      <div className="space-y-1">
+        <p className="font-medium">
+          {waiting
+            ? "Connected to Colab — now start the training cell"
+            : "Training started — preparing your run"}
+        </p>
+        <p className="text-xs leading-relaxed opacity-90">
+          {waiting ? (
+            <>
+              Go back to your Colab notebook and run the last cell (
+              <span className="font-medium">“Run training”</span>). Live metrics
+              will appear here automatically — you can leave this window open.
+            </>
+          ) : (
+            <>
+              Colab is downloading the model and caching your dataset. The first
+              epoch’s metrics appear in a few minutes — longer on large
+              datasets.{" "}
+              <span className="tabular-nums">
+                Elapsed {formatElapsed(elapsedSeconds)}.
+              </span>
+            </>
+          )}
+        </p>
+      </div>
+    </div>
+  );
+}
 
 function ColabConnectionBanner({
   state,

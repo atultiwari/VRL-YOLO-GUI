@@ -4,7 +4,7 @@
 > shipped versions. Each item is a real gap, not a bug we don't know about.
 > Sorted by likelihood of hitting in real use, not by complexity.
 >
-> **Last edit: 2026-05-23 (F-chain live items added: #4 `_record_to_info` duplication, #5 no bulk operations, #6 auto-save needs an open page, #7 install.command hard-codes `/Applications`, #8 no global search, #9 pilot test outstanding, #10 Linux/Windows job-cancel-on-quit. Items #1–#3 from the P5 era remain resolved; their history stays below.).**
+> **Last edit: 2026-05-31 (P6.fix-2 added #11 — no server-side warm-up heartbeat for Colab runs; the new `preparing` elapsed timer is local-only proof-of-life. Earlier F-chain live items #4–#10 unchanged; #1–#3 from the P5 era remain resolved with history below.).**
 
 Each entry is self-contained so a future session can pick it up cold without
 re-reading the whole P5 fix chain.
@@ -852,6 +852,52 @@ phase that ships that platform.
 explicit goal. The fix is small but easy to forget at the wrong
 moment; pinning it to the platform-introduction phase keeps the
 context fresh.
+
+---
+
+## 11. No server-side warm-up heartbeat for Colab runs
+
+| | |
+|---|---|
+| **Status** | ⏳ Deferred — partially mitigated in v0.14.2 / P6.fix-2 |
+| **First flagged** | v0.14.2 / P6.fix-2 |
+| **Severity** | Low — cosmetic; only bites if Ultralytics itself hangs pre-epoch-1 |
+| **Blocks pilot?** | No |
+
+### What's happening today
+
+P6.fix-2 fixed the headline bug (a connected-but-not-started Colab session
+looking frozen) by seeding such jobs `queued`, promoting to `running` on
+the worker's `start` event, and showing `waiting for Colab` / `preparing`
+lifecycle banners on `/train/run`. The `preparing` banner carries a live
+**elapsed timer** as proof-of-life during Ultralytics' multi-minute warm-up
+(model download + dataset cache) before epoch 1 — because **no events flow
+in that window**, the desktop ticks a 1 Hz clock client-side rather than
+reacting to anything from the worker.
+
+### The gap
+
+That elapsed timer is purely local — it keeps counting regardless of what
+the Colab worker is actually doing. If Ultralytics genuinely **hangs**
+before the first `on_fit_epoch_end` (e.g. a corrupt `cache` file, a dataset
+that never finishes scanning, a wedged data loader), the banner shows a
+healthy-looking "Elapsed 14:32" while nothing is progressing. The desktop
+can't tell "warming up normally" from "stuck warming up."
+
+### Fix options (when revisited)
+
+- **Heartbeat event** — have `colab_runner.py` publish a periodic
+  `heartbeat`/`log` event (e.g. from `on_pretrain_routine_end` +
+  Ultralytics' batch callbacks) so the desktop reflects *real* worker
+  liveness, and a missed-heartbeat window can flip the banner to a
+  warning. Costs a few lines in the notebook runtime + a reader/UI branch.
+- **Warm-up timeout** — if no `start`→`epoch` transition within N minutes,
+  surface a soft "taking longer than expected — check the Colab cell for
+  errors" hint with a link back to the notebook.
+
+Deferred because the happy path is now clear and the failure it guards
+against (a silent pre-epoch hang) is rare; the elapsed timer is adequate
+proof-of-life for the common case.
 
 ---
 

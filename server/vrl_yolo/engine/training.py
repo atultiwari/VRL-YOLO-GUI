@@ -191,9 +191,20 @@ class TrainingJob:
 
     def append_event(self, event: dict) -> None:
         """Append + react to a single stdout event from the runner."""
+        became_running = False
         with self._lock:
             self.events.append(event)
             etype = event.get("type")
+            # A `start` event (or, defensively, the first `epoch`) means the
+            # runner is genuinely training now. Colab jobs are seeded
+            # "queued" the instant the desktop connects — before the
+            # notebook's training cell runs — so this is the transition that
+            # flips them to "running". Local jobs are already seeded
+            # "running" at spawn, so the queued-guard makes this a no-op for
+            # them. Never resurrect a terminal status.
+            if etype in {"start", "epoch"} and self.status == "queued":
+                self.status = "running"
+                became_running = True
             if etype == "epoch":
                 self.epoch_current = int(event.get("epoch", self.epoch_current))
                 self.metrics.update(event.get("metrics") or {})
@@ -220,6 +231,18 @@ class TrainingJob:
         # internal lock for write serialisation.
         if self._event_log is not None:
             self._event_log.append(event)
+
+        # Mirror the queued→running transition into history so /train/history
+        # reflects a live Colab run instead of leaving it stuck at "queued"
+        # until it terminates. Best-effort, same posture as the terminal
+        # update below — history writes must never stall the event flow.
+        if became_running and self._history is not None:
+            try:
+                self._history.update_status_from_snapshot(
+                    self.job_id, self.snapshot()
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
         # F3: on terminal events, flush snapshot to history + close/gzip
         # the sidecar so the file is ready for replay immediately.
@@ -553,14 +576,24 @@ class JobManager:
         synthetic_root = Path(f"colab/{job_id[:8]}")
 
         # Map remote status to our local JobStatus vocabulary.
+        #
+        # NOTE: remote "starting" → local "queued" (NOT "running"). The
+        # Colab worker reports "starting" from the moment its server is up
+        # — which is *before* the notebook's training cell has been run.
+        # Seeding "running" here made the desktop claim a run was live when
+        # nothing was happening, so /train/run looked frozen (the bug from
+        # P6.fix-2). The worker flips to "running" only once it publishes a
+        # `start` event, which `TrainingJob.append_event` translates into
+        # the queued→running transition. The desktop derives a distinct
+        # "waiting for Colab" UI state from this queued seed.
         status_map: dict[str, JobStatus] = {
-            "starting": "running",
+            "starting": "queued",
             "running": "running",
             "done": "completed",
             "cancelled": "cancelled",
             "error": "failed",
         }
-        seeded_status: JobStatus = status_map.get(init.status, "running")
+        seeded_status: JobStatus = status_map.get(init.status, "queued")
 
         started_at = datetime.now(timezone.utc)
         final_name = name.strip() or _default_run_name(

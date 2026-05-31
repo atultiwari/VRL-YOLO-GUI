@@ -3,10 +3,11 @@
 > Living tracker for the 11-phase build plan in [PLAN.md §14](../PLAN.md#14-phases--milestones)
 > plus the post-v0.9 Future-Features chain in
 > [`docs/FUTURE-FEATURES.md`](FUTURE-FEATURES.md). Updated at the end of
-> each phase boundary. **Last edit: 2026-05-21 (F4.fix-1 — macOS .dmg
-> build fix: dangling-symlink sweep in `strip_nested_macos_bundles` +
-> `symlinks=True` on the new DMG-staging `shutil.copytree`; unblocks
-> the CI macos-arm64 builds that failed on v0.13 and v0.14).**
+> each phase boundary. **Last edit: 2026-05-31 (P6.fix-2 — Colab
+> progress visibility: seed Colab jobs `queued` not `running`, promote
+> to `running` on the worker's `start` event, and add `waiting for
+> Colab` + `preparing` lifecycle banners on `/train/run` so a
+> connected-but-not-started session no longer looks frozen).**
 >
 > **Known limitations and deferred work** live in
 > [`docs/CARRY-FORWARDS.md`](CARRY-FORWARDS.md) — full diagnoses + fix
@@ -47,12 +48,13 @@
 | **F5 — Auto-save trained models + macOS first-launch helper in .dmg** | ✅ done | `v0.13-f5-autosave` | `d64b8dd` |
 | **F4 — Dataset library: naming + library tab + /datasets page + history cross-reference** | ✅ done | `v0.14-f4-dataset-library` | `08e0828` |
 | F4.fix-1 — macOS .dmg build fix (dangling-symlink sweep + `symlinks=True` on copytree) | ✅ done | `v0.14.1` | `1a5fb1f` |
+| P6.fix-2 — Colab progress visibility (`waiting for Colab` + warm-up `preparing` states; queued→running on `start`) | ✅ done | `v0.14.2` | _(pending)_ |
 | **P7 — Polish** | ⏳ next | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |
 | P10 — Pilot | ⏳ pending | — | — |
 
-**Current head:** `main` at the F4.fix-1 commit (`v0.14.1`). **F-chain complete** — F1 (models polish) → F2 (run naming + TZ) → F3 (persistent history) → F5 (auto-save + macOS install assets) → F4 (dataset library) all shipped, followed by F4.fix-1 which unblocks the CI macos-arm64 release build that F5 had inadvertently broken at the new DMG-staging step. SQLite schema is now at v2 (`training_runs` + `datasets` tables). New `/datasets` top-level page + per-dataset detail at `/datasets/view?id=<id>` + "Pick from library" tab on `/train/dataset` + naming on every dataset (with inline rename pencil on every library row + on the detail page) + cross-referenced stats showing `last_used_at` + `run_count` from F3 history. F2's training-history dataset filter swapped from raw UUID stubs to friendly names. `DELETE /api/datasets/{id}` refuses with 409 if any active job is using it; soft-mention modal explains that referenced history rows stay and library checkpoints stay in `/models`. 116 backend tests + tsc green; static export builds 14 pages including the two new dataset pages. **Next:** P7 — Polish (per PLAN.md §14). After P7: P8 (macOS packaging) → P9 (Windows packaging) → P10 (Pilot). The real-world pilot test (`docs/PILOT-TEST.md`) still hasn't been run — that's the v1.0 gate and a clinician + dataset task.
+**Current head:** `main` at the P6.fix-2 change (`v0.14.2`, pending commit) — a Colab progress-visibility fix layered on top of the completed F-chain. A connected-but-not-started Colab session no longer renders as a frozen "running" screen: jobs seed `queued`, promote to `running` on the worker's `start` event (mirrored into F3 history), and `/train/run` shows `waiting for Colab` / `preparing` lifecycle banners. 117 backend tests + tsc green. **F-chain complete** — F1 (models polish) → F2 (run naming + TZ) → F3 (persistent history) → F5 (auto-save + macOS install assets) → F4 (dataset library) all shipped, followed by F4.fix-1 which unblocks the CI macos-arm64 release build that F5 had inadvertently broken at the new DMG-staging step. SQLite schema is now at v2 (`training_runs` + `datasets` tables). New `/datasets` top-level page + per-dataset detail at `/datasets/view?id=<id>` + "Pick from library" tab on `/train/dataset` + naming on every dataset (with inline rename pencil on every library row + on the detail page) + cross-referenced stats showing `last_used_at` + `run_count` from F3 history. F2's training-history dataset filter swapped from raw UUID stubs to friendly names. `DELETE /api/datasets/{id}` refuses with 409 if any active job is using it; soft-mention modal explains that referenced history rows stay and library checkpoints stay in `/models`. 116 backend tests + tsc green; static export builds 14 pages including the two new dataset pages. **Next:** P7 — Polish (per PLAN.md §14). After P7: P8 (macOS packaging) → P9 (Windows packaging) → P10 (Pilot). The real-world pilot test (`docs/PILOT-TEST.md`) still hasn't been run — that's the v1.0 gate and a clinician + dataset task.
 
 ---
 

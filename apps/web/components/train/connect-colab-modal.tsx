@@ -113,11 +113,18 @@ export function ConnectColabModal({
               training notebook in Colab
             </p>
             <p className="text-xs text-ink-muted">
-              Run all cells, then copy the URL the cell prints (
+              Use <span className="font-medium">Runtime → Run all</span> so the
+              last cell (
+              <code className="rounded bg-surface-muted px-1 py-0.5">
+                Run training
+              </code>
+              ) actually starts — the tunnel URL prints before it. Then copy
+              the URL the cell shows (
               <code className="rounded bg-surface-muted px-1 py-0.5">
                 https://&hellip;.trycloudflare.com?token=&hellip;
               </code>
-              ) and paste it below.
+              ) and paste it below. If you connect before that cell runs, this
+              screen will say “waiting for Colab”.
             </p>
             <div className="flex items-center gap-2">
               <code className="flex-1 truncate rounded-md border border-surface-muted bg-surface-subtle px-2.5 py-1.5 text-xs text-ink">

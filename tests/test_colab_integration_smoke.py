@@ -128,6 +128,45 @@ def test_start_colab_job_seeds_training_job(fake_tunnel, tmp_path: Path) -> None
     assert job.batch == 16
     assert job.accelerator_kind == "colab"
     assert job.output_dir.is_dir()
+    # P6.fix-2: the worker reports "starting" until its training cell runs,
+    # so the desktop must seed "queued" — NOT "running". Claiming "running"
+    # here is the bug that made /train/run look frozen.
+    assert job.status == "queued"
+
+
+def test_start_event_flips_queued_to_running(fake_tunnel, tmp_path: Path) -> None:
+    """P6.fix-2: a `start` event is what promotes queued → running.
+
+    Drives the exact recovery path the bug report needs: connect before the
+    notebook's training cell runs (job seeded "queued"), then run the cell
+    (worker publishes `start`) and confirm the desktop job flips to running.
+    """
+    from vrl_yolo.engine.training import JobManager
+
+    server, tunnel_url = fake_tunnel
+    manager = JobManager(storage_root=tmp_path)
+
+    job = manager.start_colab_job(tunnel_url)
+    assert job.status == "queued"
+
+    # The clinician runs cell 5 — the worker emits `start`.
+    server.publish_event(
+        "start",
+        model="yolo26n.pt",
+        task="detect",
+        epochs=3,
+        imgsz=640,
+        batch=16,
+        device=0,
+    )
+
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if job.status == "running":
+            break
+        time.sleep(0.1)
+
+    assert job.status == "running"
 
 
 def test_reader_thread_propagates_events(fake_tunnel, tmp_path: Path) -> None:

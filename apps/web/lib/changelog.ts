@@ -41,13 +41,32 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.14.2",
+    phase: "P6.fix-2",
+    title: "Colab progress visibility — 'waiting for Colab' + warm-up states",
+    tag: "v0.14.2",
+    commit: "0000000",
+    date: "2026-05-31",
+    status: "current",
+    features: [],
+    fixes: [
+      "**The desktop now tells you when a Colab session is connected but training hasn't started.** Previously, pasting the tunnel URL before running the notebook's last cell (`Run training`) left `/train/run` showing a *running* badge with empty charts and a 0/50 epoch bar — indistinguishable from a stuck run. Root cause: `JobManager.start_colab_job` mapped the worker's `starting` status (reported the moment its server is up, *before* the training cell runs) to a local `running` status. The Colab worker only actually starts training when its `start` event fires.",
+      "**Honest seed + automatic promotion.** Colab jobs are now seeded `queued` (not `running`); `TrainingJob.append_event` promotes `queued → running` the instant a `start` (or first `epoch`) event arrives, and mirrors that transition into the F3 history so `/train/history` reflects live Colab runs too. The recovery path is automatic: run the training cell and the desktop flips to live on its own — no reconnect needed.",
+      "**Two new clinician-readable lifecycle banners on `/train/run`** (distinct from the existing reconnect/back-off banner): a `waiting for Colab` badge + amber banner — *“Connected to Colab — now run the last cell (Run training) in your notebook”* — while the job is seeded `queued`; and a `preparing` banner with a live ticking *Elapsed …* timer — *“Training started — downloading the model and caching your dataset; first-epoch metrics appear in a few minutes”* — to give proof-of-life through Ultralytics' multi-minute warm-up before epoch 1. Both clear automatically when the first epoch lands.",
+      "**Recurrence prevention.** The *Connect to Colab* modal now tells you to use **Runtime → Run all** so the `Run training` cell actually starts (the tunnel URL prints before it), and warns that connecting early shows *waiting for Colab*. Both companion notebooks (`01_train_detect_colab.ipynb`, `02_train_classify_colab.ipynb`) print a *“Next: run the cell below (Run training) to begin”* line right after the tunnel URL.",
+    ],
+    knownLimitations: [
+      "No server-side heartbeat during warm-up — the desktop's elapsed timer is the proof-of-life. If Ultralytics itself hangs before epoch 1 (e.g. a corrupt dataset cache), the banner keeps timing rather than surfacing the stall; a warm-up timeout/heartbeat is deferred.",
+    ],
+  },
+  {
     version: "0.14.1",
     phase: "F4.fix-1",
     title: "macOS .dmg build fix — dangling-symlink sweep + symlinks=True on copytree",
     tag: "v0.14.1",
     commit: "1a5fb1f",
     date: "2026-05-21",
-    status: "current",
+    status: "shipped",
     features: [],
     fixes: [
       "**macOS-arm64 GitHub Actions release builds now succeed.** Both `v0.13-f5-autosave` and `v0.14-f4-dataset-library` failed in CI at the new DMG-staging step that F5 introduced (`scripts/build-release.py::maybe_macos_dmg`). The post-build cleanup step removes PySide6 devtool `.app` bundles (Assistant, Designer, Linguist, qtdiag, pyside6-*) but PyInstaller's PySide6 hook drops sibling symlinks pointing at those bundles; deleting the real directories left dangling symlinks behind. The new `shutil.copytree(app_path, stage_dir / app_path.name)` then tried to follow them and exploded with `FileNotFoundError: '.../PySide6/Assistant.app'`. Two surgical fixes: (1) `strip_nested_macos_bundles` now skips symlinks in its first pass (was implicitly following them via `Path.is_dir()`) and adds a second pass that unlinks any broken symlinks left behind by the strip; (2) the `shutil.copytree` call in `maybe_macos_dmg` now passes `symlinks=True` so Qt framework `Versions/Current → A` symlinks are preserved as symlinks rather than followed (also tolerates any broken symlinks that slip through). Verified against a synthetic bundle that reproduces the exact PySide6 layout: 14/14 checks pass — strip removes exactly the 3 devtool bundles, sibling symlinks are cleaned up, `QtWebEngineProcess.app` (the Pyloid webview helper) is preserved, and `copytree(symlinks=True)` round-trips the bundle including the `Versions/Current` symlink intact.",

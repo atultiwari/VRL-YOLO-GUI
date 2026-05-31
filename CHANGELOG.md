@@ -12,6 +12,28 @@ for the running tracker.
 
 ---
 
+## [0.14.2] — 2026-05-31 · P6.fix-2: Colab progress visibility — "waiting for Colab" + warm-up states
+
+**Tag:** `v0.14.2`
+
+### Fixed
+- **The desktop now tells you when a Colab session is connected but training hasn't started.** Pasting the tunnel URL before running the notebook's last cell (`Run training`) used to leave `/train/run` showing a *running* badge with empty charts and a 0/50 epoch bar — indistinguishable from a stuck run. Root cause: `JobManager.start_colab_job` mapped the Colab worker's `starting` status (reported the moment its mini-server is up, **before** the training cell runs) to a local `running` status, so the desktop claimed a run was live when nothing was happening.
+- **Honest seed + automatic promotion** (`server/vrl_yolo/engine/training.py`). Colab jobs are now seeded `queued` instead of `running`. `TrainingJob.append_event` promotes `queued → running` the instant a `start` event (or, defensively, the first `epoch`) arrives — the same transition for both local and Colab paths — and mirrors it into the F3 history DB so `/train/history` reflects live Colab runs rather than leaving them stuck at `queued`. The recovery path is fully automatic: run the training cell and the desktop flips to live on its own.
+
+### Added
+- **Two clinician-readable lifecycle banners on `/train/run`** (`apps/web/app/train/run/page.tsx`), distinct from the existing reconnect/back-off `ColabConnectionBanner`:
+  - **`waiting for Colab`** — a distinct badge + amber banner shown while a connected Colab job is still seeded `queued`: *“Connected to Colab — now run the last cell (Run training) in your notebook. Live metrics will appear here automatically.”*
+  - **`preparing`** — shown once training has started (`running`) but epoch 1 hasn't finished: *“Training started — downloading the model and caching your dataset; first-epoch metrics appear in a few minutes,”* with a **live ticking `Elapsed …` timer** so there's proof-of-life through Ultralytics' multi-minute warm-up (no events flow in that window, so the page ticks a 1 Hz clock only while preparing). Both banners clear automatically when the first `epoch` event lands.
+- **Recurrence prevention.** The *Connect to Colab* modal copy now directs the user to **Runtime → Run all** (so the `Run training` cell actually starts — the tunnel URL prints before it) and warns that connecting early shows *waiting for Colab*. Both companion notebooks print a *“Next: run the cell below (Run training) to begin”* line immediately after the tunnel URL.
+
+### Tests
+- `tests/test_colab_integration_smoke.py`: asserts a `starting`-state connect seeds `queued` (not `running`), and a new test drives the exact bug-report recovery path — connect while `queued`, publish a `start` event, confirm the job flips to `running`. **117 backend tests pass; `tsc --noEmit` clean.**
+
+### Notes
+- Desktop + notebook only — no packaging changes; the `waiting` state is a desktop-only display state, never a persisted backend `JobStatus`. Deferred: a server-side warm-up heartbeat/timeout (the elapsed timer is the current proof-of-life).
+
+---
+
 ## [0.14.1] — 2026-05-21 · F4.fix-1: macOS .dmg build fix — dangling-symlink sweep + `symlinks=True` on copytree
 
 **Tag:** `v0.14.1`
