@@ -49,7 +49,7 @@
 | F4.fix-1 — macOS .dmg build fix (dangling-symlink sweep + `symlinks=True` on copytree) | ✅ done | `v0.14.1` | `1a5fb1f` |
 | P6.fix-2 — Colab progress visibility (`waiting for Colab` + warm-up `preparing` states; queued→running on `start`) | ✅ done | `v0.14.2` | `242aa0d` |
 | **F6a — Explainable AI: Eigen-CAM "Why?" heatmaps on Predict** | ✅ done | `v0.15-f6a-explain` | `f5e52f3` |
-| **F6b — XAI part 2: opacity setting + Models "Test explanation"** | ✅ done | `v0.16-f6b-explain-models` | _unreleased_ |
+| **F6b — XAI part 2: opacity setting + Models "Test explanation"** | ✅ done | `v0.16-f6b-explain-models` | `dc3b7bf` |
 | F6c — XAI part 3: report (PDF/XLSX) overlays + folder-batch explanations | ⏳ next | — | — |
 | **P7 — Polish** | ⏳ pending | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |

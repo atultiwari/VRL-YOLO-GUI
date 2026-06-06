@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "F6b",
     title: "Explainable AI part 2 — opacity setting + Models 'Test explanation'",
     tag: "v0.16-f6b-explain-models",
-    commit: "UNRELEASED",
+    commit: "dc3b7bf",
     date: "2026-06-06",
     status: "current",
     features: [
