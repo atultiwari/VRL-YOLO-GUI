@@ -69,6 +69,15 @@ export interface AppSettings {
    * symmetry rationale.
    */
   auto_save_trained_models: boolean;
+
+  /**
+   * F6b: default heatmap opacity (0–1) for the Eigen-CAM "Why?" overlay
+   * on /predict and the Models "Test explanation" modal. The in-modal
+   * slider still overrides per view; this is just the starting value.
+   * 0.55 leans toward the heatmap so the salient region reads clearly
+   * at a glance without fully hiding the tissue underneath.
+   */
+  explain_default_opacity: number;
 }
 
 const DEFAULTS: AppSettings = {
@@ -76,6 +85,7 @@ const DEFAULTS: AppSettings = {
   timezone: "system",
   auto_purge_old_runs: false,
   auto_save_trained_models: true,
+  explain_default_opacity: 0.55,
 };
 
 const STORAGE_KEY = "vrl-yolo-gui.settings.v1";

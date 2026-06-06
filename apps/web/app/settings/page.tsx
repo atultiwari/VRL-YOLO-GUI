@@ -1,6 +1,12 @@
 "use client";
 
-import { Brain, Clock, RotateCcw, SlidersHorizontal } from "lucide-react";
+import {
+  Brain,
+  Clock,
+  RotateCcw,
+  SlidersHorizontal,
+  Sparkles,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -11,6 +17,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Slider } from "@/components/ui/slider";
 import { formatDate, resolveTimezone } from "@/lib/format-date";
 import { useSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
@@ -258,6 +265,32 @@ export default function SettingsPage() {
               }
               checked={settings.auto_purge_old_runs}
               onChange={(v) => setSetting("auto_purge_old_runs", v)}
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="size-4 text-accent" />
+              Explanations
+            </CardTitle>
+            <CardDescription>
+              The “Why?” overlay on Predict uses Eigen-CAM — a class-agnostic
+              map of <em>where the model looked</em> (not a claim that the
+              class is located there).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Slider
+              label="Default heatmap opacity"
+              value={settings.explain_default_opacity}
+              min={0}
+              max={1}
+              step={0.01}
+              format={(v) => `${Math.round(v * 100)}%`}
+              onChange={(v) => setSetting("explain_default_opacity", v)}
+              hint="Starting strength of the heatmap when a Why? modal opens. You can still nudge it live per image."
             />
           </CardContent>
         </Card>

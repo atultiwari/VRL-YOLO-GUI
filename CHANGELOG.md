@@ -12,6 +12,45 @@ for the running tracker.
 
 ---
 
+## [0.16.0] — 2026-06-06 · F6b: Explainable AI part 2 — opacity setting + Models "Test explanation"
+
+**Tag:** `v0.16-f6b-explain-models` (second slice of Future Feature #6 — builds
+on F6a's Eigen-CAM engine. **Frontend-only; no backend change.**)
+
+### Added
+- **Models → "Test explanation".** Every card in the Models library gains a
+  *Test* button that opens a picker; drop a sample image and the F6a `WhyModal`
+  shows the Eigen-CAM overlay of where that model looks. Lets a clinician
+  sanity-check a freshly-trained checkpoint is focusing on the right features
+  *before* trusting it on real cases. Read-only — runs inference + explain, saves
+  nothing. New `components/models/test-explanation-modal.tsx` (reuses
+  `inferSingle` → `WhyModal`).
+- **Settings → Explanations.** New section with a **default heatmap opacity**
+  slider (`explain_default_opacity`, default 55%). `WhyModal` initializes its
+  opacity from this setting (adopting the saved value once `useSettings`
+  hydrates, without clobbering a live drag); the in-modal slider still overrides
+  per image. Copy reiterates that Eigen-CAM is class-agnostic — *where the model
+  looked*, not *what class is here*.
+
+### Deferred
+- **Report (PDF/XLSX) overlay embedding** and **folder-batch explanations** move
+  to **F6c**. The report piece is a PDF two-up layout reflow in
+  `engine/reports.py` plus generating CAMs for the sample images — the one part
+  of XAI that genuinely benefits from a human reviewing the rendered page, so it
+  is split out rather than shipped blind in an autonomously-built release. The
+  "include explanations in reports by default" setting lands with F6c, next to
+  the feature it gates.
+
+### Tests
+- Frontend-only (like F5): `tsc --noEmit` clean + `pnpm build` static export
+  green (16 pages). Backend suite unchanged at **130**.
+
+### Plan
+- [`docs/PLAN-F6b.md`](docs/PLAN-F6b.md) (scope-narrowing rationale + the F6c
+  split, decided 2026-06-06).
+
+---
+
 ## [0.15.0] — 2026-06-06 · F6a: Explainable AI — Eigen-CAM "Why?" heatmaps on Predict
 
 **Tag:** `v0.15-f6a-explain` (first half of Future Feature #6; XAI requested

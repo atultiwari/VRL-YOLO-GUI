@@ -8,7 +8,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -21,6 +21,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
 import { ApiError, explainInference } from "@/lib/api";
+import { useSettings } from "@/lib/settings";
 import type {
   DetectionResponse,
   ExplainMode,
@@ -51,7 +52,19 @@ export function WhyModal({ file, previewUrl, result, onClose }: WhyModalProps) {
     isDetect && hasBoxes ? "box" : "image",
   );
   const [boxIndex, setBoxIndex] = useState(0);
-  const [opacity, setOpacity] = useState(0.55);
+  const { settings } = useSettings();
+  const [opacity, setOpacity] = useState(settings.explain_default_opacity);
+  // `useSettings` hydrates from localStorage in an effect, so the first
+  // render sees the default. Adopt the saved opacity once it loads —
+  // unless the user has already dragged the slider this session.
+  const opacityTouched = useRef(false);
+  useEffect(() => {
+    if (!opacityTouched.current) setOpacity(settings.explain_default_opacity);
+  }, [settings.explain_default_opacity]);
+  const handleOpacity = (v: number) => {
+    opacityTouched.current = true;
+    setOpacity(v);
+  };
 
   const effectiveBox = mode === "box" ? boxIndex : undefined;
 
@@ -156,7 +169,7 @@ export function WhyModal({ file, previewUrl, result, onClose }: WhyModalProps) {
               max={1}
               step={0.01}
               format={(v) => `${Math.round(v * 100)}%`}
-              onChange={setOpacity}
+              onChange={handleOpacity}
             />
 
             {isDetect ? (

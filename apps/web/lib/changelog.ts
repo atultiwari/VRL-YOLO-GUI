@@ -41,13 +41,30 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.16.0",
+    phase: "F6b",
+    title: "Explainable AI part 2 — opacity setting + Models 'Test explanation'",
+    tag: "v0.16-f6b-explain-models",
+    commit: "UNRELEASED",
+    date: "2026-06-06",
+    status: "current",
+    features: [
+      "**Test any model before you trust it.** Every card in the Models library gets a *Test* button — drop a sample image and see the Eigen-CAM overlay of where that model looks, so you can sanity-check a freshly-trained checkpoint is focusing on the right features before using it on real cases. Read-only; nothing is saved.",
+      "**A default heatmap opacity in Settings → Explanations.** Set how strong the *Why?* overlay starts; you can still nudge it live per image. (The method is Eigen-CAM — a class-agnostic map of *where the model looked*, not a claim the class is located there.)",
+    ],
+    fixes: [],
+    knownLimitations: [
+      "Report (PDF/XLSX) overlay embedding and folder-batch explanations are deferred to F6c — that PDF two-up layout reflow is the one part of XAI that really wants a human eyeballing the rendered page, so it's split out rather than shipped blind.",
+    ],
+  },
+  {
     version: "0.15.0",
     phase: "F6a",
     title: "Explainable AI — Eigen-CAM 'Why?' heatmaps on Predict",
     tag: "v0.15-f6a-explain",
     commit: "f5e52f3",
     date: "2026-06-06",
-    status: "current",
+    status: "shipped",
     features: [
       "**Every single-image prediction now has a *Why?* button.** Click it to see an Eigen-CAM heatmap overlaid on your image — showing *where the model looked* when it made the call. Built for the clinical question a pathologist always asks a trainee: “what did you see?”",
       "**Detection explanations are per-detection.** The modal steps through each box (prev/next), renormalizing the heatmap inside the selected box so you see what drove *that* call — with the class name, confidence, and a *peak activation* readout (how strong the box is relative to the image's hottest point). A *Whole image* toggle shows the global map too.",

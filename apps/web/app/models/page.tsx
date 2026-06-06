@@ -10,6 +10,7 @@ import {
   FolderOpen,
   Microscope,
   PencilLine,
+  Sparkles,
   Star,
   Trash2,
   Upload,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import { useRef, useState } from "react";
 
+import { TestExplanationModal } from "@/components/models/test-explanation-modal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -70,6 +72,7 @@ function ModelCard({
   const [renameError, setRenameError] = useState<string | null>(null);
   const [revealError, setRevealError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [testOpen, setTestOpen] = useState(false);
 
   const rename = useMutation({
     mutationFn: async () => {
@@ -257,6 +260,14 @@ function ModelCard({
             <Button
               variant="ghost"
               size="sm"
+              onClick={() => setTestOpen(true)}
+              title={`Test what ${model.name} looks at on a sample image`}
+            >
+              <Sparkles className="size-4" /> Test
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={onDownload}
               title={`Download ${model.name}`}
             >
@@ -307,6 +318,9 @@ function ModelCard({
             await queryClient.invalidateQueries({ queryKey: ["models"] });
           }}
         />
+      ) : null}
+      {testOpen ? (
+        <TestExplanationModal model={model} onClose={() => setTestOpen(false)} />
       ) : null}
     </Card>
   );
