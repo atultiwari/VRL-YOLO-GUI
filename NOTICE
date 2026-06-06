@@ -86,6 +86,22 @@ react-dropzone  —  https://github.com/react-dropzone/react-dropzone
   License: MIT
 
 ------------------------------------------------------------------------
+Algorithm credit (not bundled — re-implemented in-house):
+
+  The Eigen-CAM explainability engine (server/vrl_yolo/engine/explain.py)
+  re-implements the standard CAM helpers `get_2d_projection`,
+  `scale_cam_image`, and `show_cam_on_image` from:
+
+  pytorch-grad-cam  —  https://github.com/jacobgil/pytorch-grad-cam
+    License: MIT  (Jacob Gildenblat)
+  YOLO-26-CAM  —  https://github.com/rigvedrs/YOLO-26-CAM
+    License: MIT  (© 2023 Rigved Shirvalkar)
+
+  No source from these projects is bundled; our implementation mirrors
+  their (standard, MIT-licensed) approach. Eigen-CAM method:
+  Muhammad & Yeasin, 2020, arXiv:2008.00299.
+
+------------------------------------------------------------------------
 The bundled third-party software listed above is provided "as is", without
 warranty of any kind, express or implied. See each component's upstream
 project for full license texts and any additional notices.

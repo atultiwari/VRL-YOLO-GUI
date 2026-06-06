@@ -63,6 +63,32 @@ export interface ClassificationResponse {
 // Discriminated union — narrow via `if (result.task === "detect")`.
 export type InferenceResponse = DetectionResponse | ClassificationResponse;
 
+// --- Explainability (F6a) ---
+
+export type ExplainMode = "image" | "box";
+
+export interface ExplainResponse {
+  task: Task;
+  model: string;
+  mode: ExplainMode;
+  box_index: number | null;
+  // Always "eigen-cam" in F6a.
+  method: string;
+  // Qualified name of the hooked layer, surfaced for transparency.
+  layer_used: string;
+  // True when the blessed `[-2]` layer wasn't available and we fell back
+  // to the last Conv2d — the modal warns "interpret with care".
+  degraded: boolean;
+  width: number;
+  height: number;
+  // base64 RGBA PNG of the JET heatmap, alpha-masked to the active region.
+  // Overlaid on the source image; strength is a client-side slider.
+  heatmap_png_b64: string;
+  // Peak / mean of the globally-normalized CAM over the active region.
+  peak: number;
+  mean: number;
+}
+
 export interface HealthResponse {
   status: string;
   version: string;

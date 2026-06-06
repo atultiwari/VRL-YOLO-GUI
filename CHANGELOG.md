@@ -12,6 +12,69 @@ for the running tracker.
 
 ---
 
+## [0.15.0] — 2026-06-06 · F6a: Explainable AI — Eigen-CAM "Why?" heatmaps on Predict
+
+**Tag:** `v0.15-f6a-explain` (first half of Future Feature #6; XAI requested
+ahead of P7. F6b — reports + Models-library CTA + settings — follows.)
+
+### Added
+- **A *Why?* affordance on every single-image prediction (`/predict`).** Opens
+  a modal that overlays an Eigen-CAM heatmap on the source image, answering
+  "what did the model look at?" — the interpretability gate for clinical
+  adoption. New `components/predict/why-modal.tsx`; one button wired into the
+  single-result view.
+- **Per-detection explanations.** Detection mode steps through each box
+  (prev/next) and renormalizes the CAM inside the selected box so the overlay
+  reads as "what drove *this* detection", with class name, confidence, and a
+  **peak-activation** stat (the box's heat relative to the image's hottest
+  point — distinguishes a focused detection from a guess). A *Whole image*
+  toggle shows the global map.
+- **Image-level classification explanations.** One heatmap of the regions the
+  model responded to most. Eigen-CAM is **class-agnostic**, so the copy is
+  deliberately *"where the model looked"*, never *"the model saw class X
+  here"* — and there is intentionally no per-class switcher (that needs a
+  gradient method).
+- **Live, client-side opacity.** The backend returns an **alpha-masked RGBA
+  heatmap** sized to the image; the modal fades it in/out with a CSS-opacity
+  slider — no round-trips per adjustment.
+- **In-house Eigen-CAM engine** (`server/vrl_yolo/engine/explain.py`, ~80 LOC)
+  + `InferenceEngine.explain_single` + `POST /api/inference/explain`. **Zero
+  new dependencies** — Eigen-CAM is gradient-free (first principal component
+  of a target layer's activations), so it needs only the `torch`/`numpy`/`cv2`
+  already shipped. Activations are captured with a forward hook while
+  inference runs through the ultralytics `YOLO` object, so Ultralytics does
+  its own letterbox/normalize preprocessing (no hand-built input tensor). The
+  target layer is `model.model.model[-2]` with a last-`Conv2d` reflection
+  fallback (flagged `degraded` → the modal warns "interpret with care") for
+  odd user imports.
+
+### Notes
+- **Deterministic sign orientation.** The SVD singular-vector sign is
+  arbitrary, so the projection is oriented to correlate positively with
+  per-location activation energy — without this the `ReLU` could zero out the
+  *salient* region on a sign flip (a latent bug the reference implementations
+  leave to luck).
+- **Attribution.** The standard CAM helpers are re-implemented from
+  `jacobgil/pytorch-grad-cam` (MIT) as adapted in `rigvedrs/YOLO-26-CAM` (MIT,
+  © 2023 Rigved Shirvalkar) — no source bundled; credited in `NOTICE`.
+- For very non-square images the heatmap is resized straight to the original
+  aspect ratio (ignoring internal letterbox padding) and can look slightly
+  stretched — negligible for the square 224/640 patches typical of
+  histopathology.
+
+### Tests
+- `tests/test_explain.py`: numeric core (projection / scale / RGBA / PNG),
+  target-layer picker (default `[-2]` + degraded fallback), router contract
+  (200 + decodable RGBA PNG, box-index pass-through, 400 / empty-upload), and
+  a `slow` ml-gated integration test against the bundled `yolo26n.pt`. **130
+  backend tests pass** (was 117); `tsc` clean; static export builds 16 pages.
+
+### Plan
+- Design + decisions in [`docs/PLAN-F6a.md`](docs/PLAN-F6a.md) (pure in-house
+  Eigen-CAM + F6a/F6b split signed off 2026-06-06).
+
+---
+
 ## [0.14.2] — 2026-05-31 · P6.fix-2: Colab progress visibility — "waiting for Colab" + warm-up states
 
 **Tag:** `v0.14.2`

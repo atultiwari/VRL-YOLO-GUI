@@ -181,6 +181,63 @@ class InferenceEngine:
         # mismatch here means somebody bypassed the registry.
         raise InferenceError(f"unsupported task: {record.task!r}")
 
+    # ---- explain (F6a) -----------------------------------------------
+
+    def explain_single(
+        self,
+        *,
+        image_bytes: bytes,
+        model_name: str,
+        mode: str = "image",
+        box_index: int | None = None,
+        conf: float = 0.25,
+        iou: float = 0.45,
+    ):
+        """Eigen-CAM heatmap for one image (see `engine/explain.py`).
+
+        Mirrors `infer_single`'s validation + dispatch. `box` mode is
+        detection-only and needs a `box_index`. Returns an
+        `ExplanationResult`; `ExplainError` is normalised to
+        `InferenceError` so the API layer maps every user-input failure
+        to a 4xx the same way single inference does.
+        """
+        # Imported lazily — pulls cv2 + the explain module only when the
+        # user actually asks "why?", keeping the cold inference path lean.
+        from vrl_yolo.engine.explain import ExplainError, explain
+
+        if mode not in ("image", "box"):
+            raise InferenceError(f"mode must be 'image' or 'box'; got {mode!r}")
+
+        try:
+            record = self._registry.get(model_name)
+        except KeyError as exc:
+            raise InferenceError(f"model {model_name!r} not in registry") from exc
+
+        if record.task == "classify" and mode == "box":
+            raise InferenceError("box-mode explanation is detection-only")
+
+        try:
+            image = Image.open(io.BytesIO(image_bytes))
+            image.load()
+        except Exception as exc:  # noqa: BLE001
+            raise InferenceError(f"could not decode image: {exc}") from exc
+
+        yolo = self._registry.load(model_name)
+        try:
+            return explain(
+                yolo=yolo,
+                image=image,
+                model_name=model_name,
+                task=record.task,
+                mode=mode,  # type: ignore[arg-type]
+                box_index=box_index,
+                conf=conf,
+                iou=iou,
+                accelerator_kind=self.accelerator.kind,
+            )
+        except ExplainError as exc:
+            raise InferenceError(str(exc)) from exc
+
     # ---- detect ------------------------------------------------------
 
     def _run_detect(

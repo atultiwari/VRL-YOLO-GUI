@@ -10,6 +10,7 @@ from vrl_yolo import __version__
 from vrl_yolo.api.lifespan import lifespan
 from vrl_yolo.api.routers import (
     dataset,
+    explain,
     hardware,
     health,
     inference,
@@ -53,6 +54,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(presets.router, prefix=prefix)
     app.include_router(dataset.router, prefix=prefix)
     app.include_router(inference.router, prefix=prefix)
+    app.include_router(explain.router, prefix=prefix)
     app.include_router(training.router, prefix=prefix)
     app.include_router(reports.router, prefix=prefix)
 

@@ -1,6 +1,8 @@
 import type {
   DatasetInfo,
   DatasetsListResponse,
+  ExplainMode,
+  ExplainResponse,
   HardwareInfo,
   HealthResponse,
   InferenceResponse,
@@ -90,6 +92,45 @@ export async function inferSingle({
   form.append("conf", String(conf));
   form.append("iou", String(iou));
   return fetchJson(`${API_BASE}/inference/single`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+// --- Explainability (F6a) ----------------------------------------------
+
+export interface ExplainArgs {
+  image: File;
+  model: string;
+  /** "image" = whole-image heatmap; "box" = detection-only, needs boxIndex. */
+  mode: ExplainMode;
+  boxIndex?: number;
+  conf?: number;
+  iou?: number;
+}
+
+/**
+ * Request an Eigen-CAM heatmap for one image. Stateless — re-uploads the
+ * image (matches `inferSingle`). Opacity is a pure client concern (the
+ * returned PNG is alpha-masked; the modal scales it with CSS), so it is
+ * not sent here.
+ */
+export async function explainInference({
+  image,
+  model,
+  mode,
+  boxIndex,
+  conf = 0.25,
+  iou = 0.45,
+}: ExplainArgs): Promise<ExplainResponse> {
+  const form = new FormData();
+  form.append("image", image);
+  form.append("model", model);
+  form.append("mode", mode);
+  if (boxIndex !== undefined) form.append("box_index", String(boxIndex));
+  form.append("conf", String(conf));
+  form.append("iou", String(iou));
+  return fetchJson(`${API_BASE}/inference/explain`, {
     method: "POST",
     body: form,
   });

@@ -41,13 +41,34 @@ export interface ReleaseEntry {
 
 export const RELEASES: ReleaseEntry[] = [
   {
+    version: "0.15.0",
+    phase: "F6a",
+    title: "Explainable AI — Eigen-CAM 'Why?' heatmaps on Predict",
+    tag: "v0.15-f6a-explain",
+    commit: "UNRELEASED",
+    date: "2026-06-06",
+    status: "current",
+    features: [
+      "**Every single-image prediction now has a *Why?* button.** Click it to see an Eigen-CAM heatmap overlaid on your image — showing *where the model looked* when it made the call. Built for the clinical question a pathologist always asks a trainee: “what did you see?”",
+      "**Detection explanations are per-detection.** The modal steps through each box (prev/next), renormalizing the heatmap inside the selected box so you see what drove *that* call — with the class name, confidence, and a *peak activation* readout (how strong the box is relative to the image's hottest point). A *Whole image* toggle shows the global map too.",
+      "**Classification shows one image-level heatmap** highlighting the regions the model responded to most. Honest by design: Eigen-CAM is class-agnostic, so the copy says *“where the model looked,”* never *“the model saw class X here.”*",
+      "**Live opacity slider, zero new dependencies.** The heatmap is an alpha-masked overlay you fade in/out instantly (no round-trips). The whole engine is ~80 lines of in-house NumPy/OpenCV — Eigen-CAM is gradient-free (first principal component of the layer activations), so it needed nothing beyond what the app already ships.",
+    ],
+    fixes: [],
+    knownLimitations: [
+      "Explanations are single-image only for now. Batch-report embedding (PDF/XLSX), a *Test explanation* button on the Models library, and a default-opacity setting are the next slice (F6b).",
+      "Eigen-CAM is class-agnostic — there is no per-class (Top-1…Top-5) heatmap switcher for classification, because the method takes no class label. Per-class explanations would need a gradient method (Grad-CAM); deferred unless pilot users ask for it.",
+      "For very non-square images the heatmap is resized straight to the original aspect ratio (ignoring the model's internal letterbox padding), so it can look slightly stretched. Negligible for the square 224/640 patches typical of histopathology.",
+    ],
+  },
+  {
     version: "0.14.2",
     phase: "P6.fix-2",
     title: "Colab progress visibility — 'waiting for Colab' + warm-up states",
     tag: "v0.14.2",
     commit: "242aa0d",
     date: "2026-05-31",
-    status: "current",
+    status: "shipped",
     features: [],
     fixes: [
       "**The desktop now tells you when a Colab session is connected but training hasn't started.** Previously, pasting the tunnel URL before running the notebook's last cell (`Run training`) left `/train/run` showing a *running* badge with empty charts and a 0/50 epoch bar — indistinguishable from a stuck run. Root cause: `JobManager.start_colab_job` mapped the worker's `starting` status (reported the moment its server is up, *before* the training cell runs) to a local `running` status. The Colab worker only actually starts training when its `start` event fires.",

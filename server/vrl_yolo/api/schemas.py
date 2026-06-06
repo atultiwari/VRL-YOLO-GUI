@@ -100,6 +100,41 @@ InferenceResponse = Annotated[
 ]
 
 
+# --- Explainability (F6a) ---
+
+
+class ExplainResponse(BaseModel):
+    """Eigen-CAM heatmap for one image (`POST /api/inference/explain`).
+
+    `heatmap_png_b64` is a base64 **RGBA** PNG sized to the original
+    image: the JET colorization of the normalized CAM, alpha-masked to the
+    active region. The frontend overlays it on the source image and
+    controls strength with a client-side opacity slider — opacity never
+    round-trips.
+    """
+
+    task: Task
+    model: str
+    mode: Literal["image", "box"]
+    box_index: int | None = None
+    # Always "eigen-cam" in F6a; carried through so a future gradient
+    # (per-class) method can reuse this shape unchanged.
+    method: str
+    # Qualified name of the hooked layer, surfaced for transparency.
+    layer_used: str
+    # True when the blessed `model.model.model[-2]` layer wasn't available
+    # and we fell back to the last Conv2d — the UI warns "interpret with care".
+    degraded: bool
+    width: int
+    height: int
+    heatmap_png_b64: str
+    # Peak / mean of the globally-normalized CAM over the active region.
+    # In box mode, `peak` reads as "how hot is this box vs the image's
+    # hottest point" — telling a focused detection from a guess.
+    peak: float
+    mean: float
+
+
 # --- Presets ---
 
 

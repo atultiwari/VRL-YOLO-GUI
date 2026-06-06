@@ -13,6 +13,7 @@ import {
   Image as ImageIcon,
   Microscope,
   Play,
+  Sparkles,
   StopCircle,
   X,
 } from "lucide-react";
@@ -29,6 +30,7 @@ import {
   SingleClassificationPanel,
   SingleDetectionPanel,
 } from "@/components/predict/single-view";
+import { WhyModal } from "@/components/predict/why-modal";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -567,6 +569,11 @@ function SingleColumn({
   onSingleClear: () => void;
 }) {
   const imageSize = singleResult?.image_size;
+  const [whyOpen, setWhyOpen] = useState(false);
+  // A class-agnostic Eigen-CAM explanation needs at least one prediction
+  // to be meaningful — gate the affordance on a completed result + the
+  // source file (the explain endpoint re-uploads it).
+  const canExplain = Boolean(singleResult && singleFile && previewUrl);
   return (
     <>
       {!previewUrl ? (
@@ -610,6 +617,25 @@ function SingleColumn({
       {singleResult?.task === "detect" ? <SingleDetectionPanel result={singleResult} /> : null}
       {singleResult?.task === "classify" ? (
         <SingleClassificationPanel result={singleResult} reviewThreshold={reviewThreshold} />
+      ) : null}
+      {canExplain ? (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-surface-muted bg-surface-subtle px-4 py-3">
+          <p className="text-sm text-ink-muted">
+            See <span className="font-medium text-ink">where the model looked</span>{" "}
+            when it made this call.
+          </p>
+          <Button variant="secondary" size="sm" onClick={() => setWhyOpen(true)}>
+            <Sparkles className="size-4" /> Why?
+          </Button>
+        </div>
+      ) : null}
+      {whyOpen && singleResult && singleFile && previewUrl ? (
+        <WhyModal
+          file={singleFile}
+          previewUrl={previewUrl}
+          result={singleResult}
+          onClose={() => setWhyOpen(false)}
+        />
       ) : null}
       {!singleResult && previewUrl ? (
         <Card>
