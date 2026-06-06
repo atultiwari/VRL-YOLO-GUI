@@ -45,7 +45,7 @@ export const RELEASES: ReleaseEntry[] = [
     phase: "F6a",
     title: "Explainable AI — Eigen-CAM 'Why?' heatmaps on Predict",
     tag: "v0.15-f6a-explain",
-    commit: "UNRELEASED",
+    commit: "f5e52f3",
     date: "2026-06-06",
     status: "current",
     features: [

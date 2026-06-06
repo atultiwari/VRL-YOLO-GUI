@@ -49,7 +49,7 @@
 | **F4 — Dataset library: naming + library tab + /datasets page + history cross-reference** | ✅ done | `v0.14-f4-dataset-library` | `08e0828` |
 | F4.fix-1 — macOS .dmg build fix (dangling-symlink sweep + `symlinks=True` on copytree) | ✅ done | `v0.14.1` | `1a5fb1f` |
 | P6.fix-2 — Colab progress visibility (`waiting for Colab` + warm-up `preparing` states; queued→running on `start`) | ✅ done | `v0.14.2` | `242aa0d` |
-| **F6a — Explainable AI: Eigen-CAM "Why?" heatmaps on Predict** | ✅ done | `v0.15-f6a-explain` | _unreleased_ |
+| **F6a — Explainable AI: Eigen-CAM "Why?" heatmaps on Predict** | ✅ done | `v0.15-f6a-explain` | `f5e52f3` |
 | **P7 — Polish** | ⏳ next | — | — |
 | P8 — Packaging macOS | ⏳ pending | — | — |
 | P9 — Packaging Windows | ⏳ pending | — | — |
